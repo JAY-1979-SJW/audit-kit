@@ -910,3 +910,17 @@ notes = [
     "투명 콘텐츠 모델 요소(ins, del 등)를 통해 부모의 제한을 우회할 수 없다 — 예: ul 의 직계 자식은 li 만(del 로 감싼 li 는 무효)",
 ]
 verified = "AI 추가, 사람 확인 전 (2026-09-30, 사이트 점검 세션) — Content_categories 문서 fetch ok"
+
+[[lib]]
+name = "packaging"
+imports = ["packaging"]
+pip = "packaging"
+docs = ["https://packaging.pypa.io/en/stable/requirements.html"]
+domains = ["packaging.pypa.io"]
+notes = [
+    "packaging.requirements.Requirement(요구사항 문자열)·packaging.version.Version·packaging.specifiers.SpecifierSet 을 제공한다",
+    "파싱할 수 없는 입력은 InvalidRequirement 예외가 난다: 명시적으로 처리할 것",
+    "이름 정규화가 동등성·해시에 영향을 준다(Requirement('Foo') == Requirement('foo'))",
+    "SpecifierSet.prereleases 는 명시 설정이 필요하다: 직렬화·pre-release 필터를 할 때 주의",
+]
+verified = "fetch ok (requirements 페이지)"
