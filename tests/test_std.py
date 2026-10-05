@@ -897,6 +897,36 @@ def test_vacuous_collection_assert_source_kinds(src, flagged):
     assert [h.check for h in hits] == (["VACUOUS-COLLECTION-ASSERT"] if flagged else [])
 
 
+_ERR08_WRAP_CASES = [
+    ("len_list_wrapped", "def test_a():\n    SRC = fetch()\n    assert len(list(SRC)) > 0\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n", False),
+    ("list_wrapped_truthy", "def test_b():\n    SRC = fetch()\n    assert list(SRC)\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n", False),
+    ("len_tuple_wrapped_ge", "def test_c():\n    SRC = fetch()\n    assert len(tuple(SRC)) >= 1\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n", False),
+    ("no_sanity_assert", "def test_d():\n    SRC = fetch()\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n", True),
+    ("sanity_on_other_source", "def test_e():\n    SRC = fetch()\n    OTHER = fetch2()\n    assert list(OTHER)\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n", True),
+    ("len_sorted_wrapped_ne_zero", "def test_f():\n    SRC = fetch()\n    assert len(sorted(SRC)) != 0\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n", False),
+    ("wrapped_source_plain_assert", "def test_g():\n    SRC = fetch()\n    assert SRC\n    bad = [a for a in list(SRC) if a.bad]\n    assert not bad\n", False),
+    ('len_reversed_compare', 'def test_i():\n    SRC = fetch()\n    assert 15 <= len(SRC)\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n', False),
+    ('len_and_truthy_conjunction', 'def test_j():\n    SRC = fetch()\n    assert len(SRC) >= 15 and SRC[0]\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n', False),
+    ('len_or_is_not_sanity', 'def test_k():\n    SRC = fetch()\n    assert len(SRC) >= 15 or flag\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n', True),
+    ('len_reversed_upper_bound_not_sanity', 'def test_l():\n    SRC = fetch()\n    assert 15 >= len(SRC)\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n', True),
+    ('len_on_mapping_items_view', 'def test_m():\n    SRC = fetch()\n    assert len(SRC) >= 15\n    bad = [k for k, v in SRC.items() if not v]\n    assert not bad\n', False),
+    ('len_on_mapping_values_view', 'def test_n():\n    SRC = fetch()\n    assert SRC\n    bad = [v for v in SRC.values() if not v]\n    assert not bad\n', False),
+    ('len_on_other_mapping_items_view', 'def test_o():\n    SRC = fetch()\n    assert len(OTHER) >= 15\n    bad = [k for k, v in SRC.items() if not v]\n    assert not bad\n', True),
+    ("len_wrapped_eq_zero_not_sanity", "def test_h():\n    SRC = fetch()\n    assert len(list(SRC)) == 0\n    bad = [a for a in SRC if a.bad]\n    assert not bad\n", True),
+]
+
+
+@pytest.mark.parametrize(
+    "src, flagged",
+    [pytest.param(src, flagged, id=cid) for cid, src, flagged in _ERR08_WRAP_CASES],
+)
+def test_vacuous_collection_assert_wrapped_sanity(src, flagged):
+    """ERR-08: 같은 SRC 를 list()/tuple() 등으로 단순 래핑한 sanity 단언도 인정한다.
+    다른 SRC 에 걸린 단언이나 sanity 가 아닌 단언은 인정하지 않는다."""
+    hits = checks.check_vacuous_collection_assert(ast.parse(src), "tests/test_x.py")
+    assert [h.check for h in hits] == (["VACUOUS-COLLECTION-ASSERT"] if flagged else [])
+
+
 def test_adr_dir_present(tmp_path):
     assert checks.check_adr_dir_present(tmp_path) != []
     (tmp_path / "docs" / "adr").mkdir(parents=True)
