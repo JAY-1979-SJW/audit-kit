@@ -927,6 +927,46 @@ def test_vacuous_collection_assert_wrapped_sanity(src, flagged):
     assert [h.check for h in hits] == (["VACUOUS-COLLECTION-ASSERT"] if flagged else [])
 
 
+_ERR08_ENUM_ZIP_CASES = [
+    ('enum_len_sanity', 'def test_x():\n    SRC = fetch()\n    assert len(SRC) > 0\n    bad = [i for i, v in enumerate(SRC) if v.bad]\n    assert not bad\n', False),
+    ('enum_truthy_sanity', 'def test_x():\n    SRC = fetch()\n    assert SRC\n    bad = [i for i, v in enumerate(SRC) if v.bad]\n    assert not bad\n', False),
+    ('enum_start_arg', 'def test_x():\n    SRC = fetch()\n    assert SRC\n    bad = [i for i, v in enumerate(SRC, 1) if v.bad]\n    assert not bad\n', False),
+    ('enum_no_sanity', 'def test_x():\n    SRC = fetch()\n    bad = [i for i, v in enumerate(SRC) if v.bad]\n    assert not bad\n', True),
+    ('enum_sanity_on_other', 'def test_x():\n    SRC = fetch()\n    OTHER = fetch2()\n    assert OTHER\n    bad = [i for i, v in enumerate(SRC) if v.bad]\n    assert not bad\n', True),
+    ('enum_wrapped_inner', 'def test_x():\n    SRC = fetch()\n    assert list(SRC)\n    bad = [i for i, v in enumerate(sorted(SRC)) if v.bad]\n    assert not bad\n', False),
+    ('enum_items_view', 'def test_x():\n    D = fetch()\n    assert D\n    bad = [i for i, (k, v) in enumerate(D.items()) if not v]\n    assert not bad\n', False),
+    ('enum_len_eq_zero_not_sanity', 'def test_x():\n    SRC = fetch()\n    assert len(SRC) == 0\n    bad = [i for i, v in enumerate(SRC) if v.bad]\n    assert not bad\n', True),
+    ('zip_both_len', 'def test_x():\n    X = fx()\n    Y = fy()\n    assert len(X) > 0\n    assert len(Y) > 0\n    bad = [a for a, b in zip(X, Y) if a != b]\n    assert not bad\n', False),
+    ('zip_both_and', 'def test_x():\n    X = fx()\n    Y = fy()\n    assert X and Y\n    bad = [a for a, b in zip(X, Y) if a != b]\n    assert not bad\n', False),
+    ('zip_only_first', 'def test_x():\n    X = fx()\n    Y = fy()\n    assert len(X) > 0\n    bad = [a for a, b in zip(X, Y) if a != b]\n    assert not bad\n', True),
+    ('zip_only_second', 'def test_x():\n    X = fx()\n    Y = fy()\n    assert Y\n    bad = [a for a, b in zip(X, Y) if a != b]\n    assert not bad\n', True),
+    ('zip_no_sanity', 'def test_x():\n    X = fx()\n    Y = fy()\n    bad = [a for a, b in zip(X, Y) if a != b]\n    assert not bad\n', True),
+    ('zip_three_args_one_missing', 'def test_x():\n    X = fx()\n    Y = fy()\n    Z = fz()\n    assert X and Y\n    bad = [a for a, b, c in zip(X, Y, Z) if a != b]\n    assert not bad\n', True),
+    ('zip_three_args_all', 'def test_x():\n    X = fx()\n    Y = fy()\n    Z = fz()\n    assert X and Y and Z\n    bad = [a for a, b, c in zip(X, Y, Z) if a != b]\n    assert not bad\n', False),
+    ('zip_strict_all', 'def test_x():\n    X = fx()\n    Y = fy()\n    assert X and Y\n    bad = [a for a, b in zip(X, Y, strict=True) if a != b]\n    assert not bad\n', False),
+    ('zip_or_not_sanity', 'def test_x():\n    X = fx()\n    Y = fy()\n    assert X or Y\n    bad = [a for a, b in zip(X, Y) if a != b]\n    assert not bad\n', True),
+    ('enum_zip_nested_all', 'def test_x():\n    X = fx()\n    Y = fy()\n    assert X and Y\n    bad = [i for i, (a, b) in enumerate(zip(X, Y)) if a != b]\n    assert not bad\n', False),
+    ('enum_zip_nested_partial', 'def test_x():\n    X = fx()\n    Y = fy()\n    assert X\n    bad = [i for i, (a, b) in enumerate(zip(X, Y)) if a != b]\n    assert not bad\n', True),
+    ('zip_with_literal_arg', 'def test_x():\n    X = fx()\n    assert X\n    bad = [a for a, b in zip(X, [1, 2, 3]) if a != b]\n    assert not bad\n', False),
+    ('zip_len_eq_chain_conservative', 'def test_x():\n    X = fx()\n    Y = fy()\n    assert len(X) == len(Y) > 0\n    bad = [a for a, b in zip(X, Y) if a != b]\n    assert not bad\n', True),
+    ('enum_exact_wrapped_expr', 'def test_x():\n    SRC = fetch()\n    assert len(list(enumerate(SRC))) > 0\n    bad = [i for i, v in enumerate(SRC) if v.bad]\n    assert not bad\n', False),
+    ('zip_items_view_all', 'def test_x():\n    X = fx()\n    Y = fy()\n    assert X and Y\n    bad = [k for (k, v), b in zip(X.items(), Y) if v != b]\n    assert not bad\n', False),
+    ('enum_sorted_no_sanity', 'def test_x():\n    SRC = fetch()\n    bad = [i for i, v in enumerate(sorted(SRC)) if v.bad]\n    assert not bad\n', True),
+    ('enum_unknown_keyword_not_unwrapped', 'def test_x():\n    SRC = fetch()\n    assert SRC\n    bad = [i for i, v in enumerate(SRC, start=1) if v.bad]\n    assert not bad\n', True),
+]
+
+
+@pytest.mark.parametrize(
+    "src, flagged",
+    [pytest.param(src, flagged, id=cid) for cid, src, flagged in _ERR08_ENUM_ZIP_CASES],
+)
+def test_vacuous_collection_assert_enumerate_zip(src, flagged):
+    """ERR-08: enumerate(x) 는 x 와 비어 있음 여부가 같으므로 x 의 sanity 단언을 인정하고,
+    zip(x, y, ...) 은 모든 위치 인자에 단언이 있을 때만 인정한다(하나라도 비면 결과가 비므로)."""
+    hits = checks.check_vacuous_collection_assert(ast.parse(src), "tests/test_x.py")
+    assert [h.check for h in hits] == (["VACUOUS-COLLECTION-ASSERT"] if flagged else [])
+
+
 def test_adr_dir_present(tmp_path):
     assert checks.check_adr_dir_present(tmp_path) != []
     (tmp_path / "docs" / "adr").mkdir(parents=True)
