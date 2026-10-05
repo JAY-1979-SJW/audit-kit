@@ -25,6 +25,12 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
+      - name: 공개 저장소 위생 검사
+        # 일반 규칙은 항상 돈다. 추가 금지어는 저장소 비밀 HYGIENE_PATTERNS 로 주입하며,
+        # 비밀이 없으면(포크 PR 등) 일반 규칙만 검사한다.
+        env:
+          HYGIENE_PATTERNS: ${{ secrets.HYGIENE_PATTERNS }}
+        run: python scripts/check_public_hygiene.py
       - name: Install
         run: |
           python -m pip install --upgrade pip
