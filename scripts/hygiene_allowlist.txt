@@ -17,9 +17,6 @@ src/audit_kit/cilocal.py:System32
 src/audit_kit/std/data/rules.toml:ABS-PATH-LITERAL
 docs/검증결과_std.md:STD-02
 
-# 이전 계획 문서의 이전 대상 폴더 표기(정리 대상 후보)
-docs/ROADMAP.md:PYTHON.34
-
 # 예시 이메일
 src/audit_kit/templates/skill-fix/SKILL.md:noreply@anthropic
 tests/test_changed_functions.py:t@example
