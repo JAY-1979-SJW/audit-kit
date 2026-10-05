@@ -1,0 +1,30 @@
+# check_public_hygiene.py 허용 목록. 형식: `경로:줄번호` 또는 `경로:정규식`(경로는 fnmatch 가능).
+# 문서·예제·시험에서 일부러 쓰는 값(가상 경로·예시 이메일·'\n' 이스케이프 오탐)만 올린다.
+
+# 연락처(공개 신고 창구로 일부러 적은 주소)
+SECURITY.md:12
+CODE_OF_CONDUCT.md:39
+
+# 가상 예시 경로
+README.md:MyProject|path.to.audit-kit|Python312
+scripts/install.ps1:MyProject
+scripts/build_offline.ps1:Python312
+scripts/validation/hosts_from.txt:my-project-
+scripts/validation/roots.txt:my-project-
+scripts/validation/mutate.py:T_PATH
+tests/test_std_variants.py:home.me
+src/audit_kit/cilocal.py:System32
+src/audit_kit/std/data/rules.toml:ABS-PATH-LITERAL
+docs/검증결과_std.md:STD-02
+
+# 이전 계획 문서의 이전 대상 폴더 표기(정리 대상 후보)
+docs/ROADMAP.md:PYTHON.34
+
+# 예시 이메일
+src/audit_kit/templates/skill-fix/SKILL.md:noreply@anthropic
+tests/test_changed_functions.py:t@example
+tests/test_cruft_e2e.py:test@example
+
+# 문자열 안의 '\n' 이스케이프를 드라이브 표기로 오인하는 경우
+src/audit_kit/arch/fix.py:except BaseException
+tests/test_cilocal.py:[a-z]:[\x5c]n
