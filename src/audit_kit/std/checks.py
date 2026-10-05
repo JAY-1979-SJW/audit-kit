@@ -784,27 +784,70 @@ def _comprehension_source(expr: ast.expr) -> ast.expr | None:
     return None
 
 
-def _sanity_assert_covers(fn: ast.AST, source_dump: str) -> bool:
-    """fn 안에 source_dump 와 같은 식이 '비어있지 않음'을 보장하는 assert 가 있는지."""
-    for node in ast.walk(fn):
-        if not isinstance(node, ast.Assert):
-            continue
-        test = node.test
-        if ast.dump(test) == source_dump:  # assert X (참이면 비어있지 않은 컬렉션/문자열)
-            return True
-        if isinstance(test, ast.Compare) and len(test.ops) == 1:
-            inner = _is_len_call(test.left)
-            op, comp = test.ops[0], test.comparators[0]
-            if (
-                inner is not None
-                and ast.dump(inner) == source_dump
-                and isinstance(comp, ast.Constant)
-            ):
-                if isinstance(op, (ast.Gt, ast.GtE)) and isinstance(comp.value, (int, float)):
-                    return True
-                if isinstance(op, ast.NotEq) and comp.value == 0:
-                    return True
+_COLLECTION_WRAPPERS = {"list", "tuple", "set", "frozenset", "sorted"}
+
+
+_MAPPING_VIEWS = {"items", "keys", "values"}
+
+
+def _unwrap_collection(node: ast.expr) -> ast.expr:
+    """list(X)/tuple(X)/set(X)/frozenset(X)/sorted(X) 단순 래핑(인자 1개, 키워드 없음)과
+    X.items()/X.keys()/X.values() 뷰 호출을 벗긴다. 이터레이터/제너레이터 SRC 는 list() 로
+    감싸야 len()/truthy 검사가 가능하고, 매핑과 그 뷰는 비어 있음 여부가 같으므로 같은 SRC 로 본다."""
+    while isinstance(node, ast.Call) and not node.keywords:
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in _COLLECTION_WRAPPERS
+            and len(node.args) == 1
+        ):
+            node = node.args[0]
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in _MAPPING_VIEWS
+            and not node.args
+        ):
+            node = node.func.value
+        else:
+            break
+    return node
+
+
+def _test_guarantees_nonempty(test: ast.expr, source_dump: str) -> bool:
+    """단언식 test 가 source_dump 와 같은 식의 '비어있지 않음'을 보장하는가.
+    `X`, `list(X)`, `len(X) > N`/`>= N`/`!= 0`, 반대 방향 `N < len(X)`/`N <= len(X)`/`0 != len(X)`,
+    그리고 `and` 로 이어진 항 중 하나라도 해당하면 True."""
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+        return any(_test_guarantees_nonempty(v, source_dump) for v in test.values)
+    if ast.dump(_unwrap_collection(test)) == source_dump:  # assert X / assert list(X)
+        return True
+    if isinstance(test, ast.Compare) and len(test.ops) == 1:
+        op, left, right = test.ops[0], test.left, test.comparators[0]
+        if _is_len_call(left) is None and _is_len_call(right) is not None:
+            # N < len(X) -> len(X) > N 로 뒤집는다
+            flip = {ast.Lt: ast.Gt, ast.LtE: ast.GtE, ast.NotEq: ast.NotEq}.get(type(op))
+            if flip is None:
+                return False
+            op, left, right = flip(), right, left
+        inner = _is_len_call(left)
+        if (
+            inner is not None
+            and ast.dump(_unwrap_collection(inner)) == source_dump
+            and isinstance(right, ast.Constant)
+        ):
+            if isinstance(op, (ast.Gt, ast.GtE)) and isinstance(right.value, (int, float)):
+                return True
+            if isinstance(op, ast.NotEq) and right.value == 0:
+                return True
     return False
+
+
+def _sanity_assert_covers(fn: ast.AST, source_dump: str) -> bool:
+    """fn 안에 source_dump 와 같은 식이 '비어있지 않음'을 보장하는 assert 가 있는지.
+    source_dump 와 단언 양쪽의 list()/tuple() 등 단순 래핑은 벗겨서 비교한다."""
+    return any(
+        isinstance(node, ast.Assert) and _test_guarantees_nonempty(node.test, source_dump)
+        for node in ast.walk(fn)
+    )
 
 
 def _bound_comprehensions(fn: ast.AST) -> dict[str, ast.expr]:
@@ -1040,7 +1083,7 @@ def check_vacuous_collection_assert(tree: ast.AST, rel: str) -> list:
             if not isinstance(node, ast.Assert):
                 continue
             source = _vacuous_assert_source(node, bound)
-            if source is None or _sanity_assert_covers(fn, ast.dump(source)):
+            if source is None or _sanity_assert_covers(fn, ast.dump(_unwrap_collection(source))):
                 continue
             if _source_is_expected_violation_list(fn, source):
                 continue
