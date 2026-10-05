@@ -902,10 +902,18 @@ _VIOLATION_NAME_RE = re.compile(
     r"|warnings?)(?:$|_)|^new_"
 )
 # 모집단(검사 대상 전체)을 만들어 내는 호출 — 이게 출처에 있으면 이름이 위반류여도 계속 표시한다.
-_POPULATION_PRODUCERS = frozenset(
-    {"glob", "rglob", "iterdir", "walk", "listdir", "scandir", "splitlines", "readlines",
-     "read_text", "getmembers"}
-)
+_POPULATION_PRODUCERS = frozenset({
+    "glob",
+    "rglob",
+    "iterdir",
+    "walk",
+    "listdir",
+    "scandir",
+    "splitlines",
+    "readlines",
+    "read_text",
+    "getmembers",
+})
 _AUDIT_CALL_RE = re.compile(r"^_*(?:audit|check|validate|scan|find|run|verify)", re.IGNORECASE)
 _REGEX_RESULT_FUNCS = frozenset({"finditer", "findall"})  # 정책: 정규식 결과는 위반 목록으로 본다
 _MUTATORS = frozenset({"append", "extend", "add", "insert", "update"})
@@ -1750,6 +1758,22 @@ def _find_spec(top: str):
         return None
 
 
+def is_first_party_source(top: str) -> bool:
+    """설치된 배포본이 아니라 소스 폴더(PYTHONPATH·작업 폴더 등)에서 풀린 자사 패키지인가.
+
+    등록부는 '외부 도구' 목록이라 자사 패키지는 등록부 누락(DOC-02)으로 볼 수 없다.
+    스크래치 폴더로 복사한 파일을 검사할 때 자사 패키지 import 마다 치명 오탐이 나던 문제를 막는다.
+    """
+    spec = _find_spec(top)
+    if spec is None:
+        return False
+    places = [spec.origin, *(spec.submodule_search_locations or [])]
+    paths = [str(p).replace("\\", "/").lower() for p in places if p and p != "built-in"]
+    if not paths:
+        return False
+    return not any("site-packages" in p or "dist-packages" in p for p in paths)
+
+
 def normalize(name: str) -> str:
     return re.sub(r"[-_.]+", "_", name).lower()
 
@@ -1797,7 +1821,7 @@ def _not_found_hit(rel: str, line: int, top: str, declared: bool, known: bool = 
         rel,
         line,
         f"'{top}' 모듈이 없음 — 설치되지 않았거나 존재하지 않는 이름(환각 import). "
-        "감사 도구가 설치된 파이썬 환경 기준",
+        "감사 도구가 설치된 파이썬 환경 기준(자사 패키지면 PYTHONPATH 에 프로젝트 루트를 지정)",
     )
 
 
@@ -1822,7 +1846,11 @@ def check_imports(
                         rel, line, top, normalize(top) in declared, top in registry_imports
                     )
                 )
-            elif top not in registry_imports and top not in seen_gap:
+            elif (
+                top not in registry_imports
+                and top not in seen_gap
+                and not is_first_party_source(top)
+            ):
                 seen_gap.add(top)
                 gaps.append(
                     Hit(

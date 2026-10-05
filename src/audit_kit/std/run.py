@@ -181,12 +181,30 @@ def run_std_ruff(cfg: AuditConfig, rules: list, files: list, ruff_config: Path) 
     )
 
 
+# 신규 모듈 편입 선언 헤더(`# key: value`)는 죽은 코드가 아니라 메타데이터 주석이다 — ERA001 오탐 제외
+HEADER_COMMENT = re.compile(
+    r"^\s*#\s*(module_category|primary_trade|layer|pipeline_stage|data|expects)\s*:"
+)
+
+
+def _is_header_comment(cfg: AuditConfig, file: str, line: int | None) -> bool:
+    if not line:
+        return False
+    try:
+        lines = (cfg.root / file).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    return 0 < line <= len(lines) and bool(HEADER_COMMENT.match(lines[line - 1]))
+
+
 def _ruff_finding(cfg: AuditConfig, rules: list, item: dict) -> Finding | None:
     file = cfg.rel(item.get("filename", ""))
     code = item.get("code") or ""
     if not file.endswith(".py"):  # ruff 가 설정 파일(ruff.toml 등)까지 검사하는 경우 제외
         return None
     line = (item.get("location") or {}).get("row")
+    if code == "ERA001" and _is_header_comment(cfg, file, line):
+        return None
     rule = ruff_rule_for(rules, code)
     if (
         rule is None
