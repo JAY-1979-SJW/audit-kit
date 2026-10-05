@@ -812,6 +812,36 @@ def _unwrap_collection(node: ast.expr) -> ast.expr:
     return node
 
 
+def _required_sources(node: ast.expr) -> list[ast.expr]:
+    """컴프리헨션 SRC 가 비어 있지 않으려면 '비어 있지 않아야 하는' 식들의 목록.
+    list()/sorted() 등 단순 래핑과 매핑 뷰는 벗기고, enumerate(x[, start]) 는 x 와 비어 있음
+    여부가 같으므로 x 의 필요 목록으로 풀며, zip(x, y, ...) 은 인자 중 하나라도 비면 결과가 비므로
+    모든 위치 인자의 필요 목록 합집합으로 푼다(비어 있지 않은 리터럴 인자는 단언 불필요).
+    키워드는 zip 의 strict 만 허용하고 그 외 키워드가 있으면 벗기지 않는다."""
+    node = _unwrap_collection(node)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        if (
+            node.func.id == "enumerate"
+            and not node.keywords
+            and 1 <= len(node.args) <= 2
+            and not any(isinstance(a, ast.Starred) for a in node.args)
+        ):
+            return _required_sources(node.args[0])
+        if (
+            node.func.id == "zip"
+            and node.args
+            and all(k.arg == "strict" for k in node.keywords)
+            and not any(isinstance(a, ast.Starred) for a in node.args)
+        ):
+            out: list[ast.expr] = []
+            for arg in node.args:
+                if _is_nonempty_literal(_unwrap_collection(arg)):
+                    continue
+                out.extend(_required_sources(arg))
+            return out
+    return [node]
+
+
 def _test_guarantees_nonempty(test: ast.expr, source_dump: str) -> bool:
     """단언식 test 가 source_dump 와 같은 식의 '비어있지 않음'을 보장하는가.
     `X`, `list(X)`, `len(X) > N`/`>= N`/`!= 0`, 반대 방향 `N < len(X)`/`N <= len(X)`/`0 != len(X)`,
@@ -1083,8 +1113,13 @@ def check_vacuous_collection_assert(tree: ast.AST, rel: str) -> list:
             if not isinstance(node, ast.Assert):
                 continue
             source = _vacuous_assert_source(node, bound)
-            if source is None or _sanity_assert_covers(fn, ast.dump(_unwrap_collection(source))):
+            if source is None:
                 continue
+            if _sanity_assert_covers(fn, ast.dump(_unwrap_collection(source))):
+                continue  # SRC 식 그대로(또는 list() 래핑) 단언된 경우
+            required = _required_sources(source)
+            if all(_sanity_assert_covers(fn, ast.dump(r)) for r in required):
+                continue  # enumerate()/zip() 의 모든 필요 인자가 단언된 경우
             if _source_is_expected_violation_list(fn, source):
                 continue
             hits.append(
