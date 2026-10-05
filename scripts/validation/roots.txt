@@ -1,0 +1,6 @@
+# corpus.py 가 검사할 실제 프로젝트 경로 목록 (한 줄에 하나, '#' 로 시작하면 주석).
+# 이 목록은 PC 마다 다르므로 저장소에는 예시만 둔다(STD-02: 소스 코드에 절대경로 하드코딩 금지).
+# 본인 PC 의 경로는 같은 폴더의 `roots.local.txt` 에 적는다(.gitignore 대상이라 커밋되지 않는다).
+# 예시:
+# C:\work\my-project-a
+# /home/me/projects/my-project-b

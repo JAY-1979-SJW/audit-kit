@@ -1,0 +1,31 @@
+# audit-kit 표준 pre-commit (최종 방어선). Claude Code hook이 1차 방어선.
+# `audit-kit init`이 pip install pre-commit 되어 있으면 `pre-commit install --hook-type
+# pre-push`(아래 마지막 훅만)는 자동으로 설치해 준다. 커밋 단계(ruff-fix/audit-kit-check)까지
+# 쓰려면 직접: pip install pre-commit && pre-commit install --hook-type pre-commit
+# (2026-09-27: 커밋 단계까지 자동 설치했더니 `audit-kit fix`가 세션 안에서 직접 만드는 커밋까지
+#  걸려 회귀가 나서, init 은 pre-push 단계만 자동 설치하도록 좁혔다 — fixflow.py 참고)
+#
+# GitHub 개인 계정 + 비공개 저장소는 branch protection/required status check API가
+# 막혀 있다(GitHub Pro 필요, 2026-09-27 실측 확인: 403 "Upgrade to GitHub Pro or make
+# this repository public"). 그 대신 pre-push 단계에서 CI(ci.yml)와 같은 검사를 로컬에서
+# 먼저 강제해, 실패하는 커밋이 애초에 원격에 올라가지 못하게 한다.
+repos:
+  - repo: local
+    hooks:
+      - id: audit-kit-ruff-fix
+        name: ruff (자동 수정)
+        entry: python -m ruff check --fix
+        language: system
+        types: [python]
+      - id: audit-kit-check
+        name: audit-kit (ruff + mypy + 순환 임포트)
+        entry: python -m audit_kit check
+        language: system
+        types: [python]
+      - id: audit-kit-pre-push
+        name: audit-kit (push 전 전체 검사 — pytest + std, ci.yml 과 동일)
+        entry: python -m audit_kit pre-push
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

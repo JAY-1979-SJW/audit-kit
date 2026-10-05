@@ -1,0 +1,110 @@
+name: Mutation testing
+
+# 이번에 바뀐 함수만 변이 테스트한다(전체를 매번 돌리면 무료 실행 시간 한도를 넘긴다).
+# mutmut 는 네이티브 Windows 를 지원하지 않아(자체 확인, 2026-09-27: "please use the WSL")
+# 이 워크플로가 유일한 실행 환경이다. 첫 실행은 workflow_dispatch 로 결과 형식을 먼저
+# 확인한 뒤, 아래 "결과 집계" 단계의 판정 기준을 다듬는다(문서: docs/개발표준_설계서.md 3.17).
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: "이 ref 이후로 바뀐 함수만 검사한다 (비우면 7일 전 커밋과 비교)"
+        required: false
+        default: ""
+      patterns:
+        description: '직접 지정할 mutmut 패턴(공백 구분, 예: "audit_kit.std.checks.check_secret_scan*"). 비우면 자동 감지'
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 3 * * 1" # 매주 월요일 03:00 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # 지난 커밋과 diff 해야 하므로 전체 이력이 필요하다
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install mutmut
+
+      - name: 비교 기준 커밋 정하기
+        id: base
+        run: |
+          if [ -n "${{ github.event.inputs.base_ref }}" ]; then
+            ref="${{ github.event.inputs.base_ref }}"
+          else
+            ref=$(git rev-list -1 --before="7 days ago" HEAD || true)
+            if [ -z "$ref" ]; then
+              ref=$(git rev-list --max-parents=0 HEAD)
+            fi
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: 바뀐 함수 찾기
+        id: changed
+        if: github.event.inputs.patterns == ''
+        run: python scripts/changed_functions.py "${{ steps.base.outputs.ref }}" HEAD > changed_patterns.txt
+
+      - name: mutmut run
+        run: |
+          if [ -n "${{ github.event.inputs.patterns }}" ]; then
+            printf '%s\n' "${{ github.event.inputs.patterns }}" | tr ' ' '\n' > run_patterns.txt
+          else
+            cp changed_patterns.txt run_patterns.txt
+          fi
+          echo "### 검사 대상 함수" >> "$GITHUB_STEP_SUMMARY"
+          if [ -s run_patterns.txt ]; then
+            sed 's/^/- /' run_patterns.txt >> "$GITHUB_STEP_SUMMARY"
+            mapfile -t patterns < run_patterns.txt
+            mutmut run "${patterns[@]}"
+          else
+            echo "(바뀐 함수가 없어 변이 테스트를 건너뜁니다)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: "변이체 이름 목록 (진단용, --all 은 값 필요 - click 옵션이 is_flag 아님)"
+        if: always()
+        run: |
+          if [ -d mutants ]; then
+            mutmut results --all true | head -5 || true
+          fi
+
+      - name: 결과 집계 (mutants/ 가 있을 때만)
+        if: always()
+        run: |
+          if [ -d mutants ]; then
+            mutmut export-cicd-stats || true
+          fi
+
+      - name: 결과 요약
+        if: always()
+        run: python scripts/summarize_mutation.py
+
+      - name: 결과 업로드
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutmut-results
+          path: |
+            mutants/mutmut-cicd-stats.json
+            mutants/*.log
+          if-no-files-found: ignore
+          retention-days: 30

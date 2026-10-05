@@ -1,0 +1,10 @@
+{
+    "package": "myapp",
+    "description": "",
+    "types": "library",
+    "concerns": "",
+    "entrypoint": "main",
+    "no_verify": "no",
+    "full_verify": "no",
+    "_copy_without_render": ["_scaffold_engine/*"]
+}

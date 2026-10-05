@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audit-kit"
+version = "0.1.0"
+description = "Python 프로젝트 구조·임포트·DB 문제 표준 감사 도구 (ruff/mypy/import-linter/vulture/radon/bandit/pytest-cov + AI 리뷰)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "ruff>=0.5",
+    "mypy>=1.8",
+    "import-linter>=2.0",
+    "vulture>=2.10",
+    "radon>=6.0",
+    "bandit>=1.7.7",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "tomli>=2.0; python_version < '3.11'",
+    "cookiecutter>=2.6",
+    "cruft>=2.16",
+    "pyyaml>=6.0",  # ci-local: .github/workflows/*.yml 파싱 (yaml.safe_load)
+]
+
+[project.optional-dependencies]
+graph = ["pydeps>=1.12"]
+dev = ["pydeps>=1.12"]
+
+[project.scripts]
+audit-kit = "audit_kit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+audit_kit = ["templates/*", "templates/**/*", "std/data/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["fixtures"]
+
+[tool.coverage.run]
+source = ["src/audit_kit"]
+
+[tool.coverage.report]
+omit = ["*/std/data/*"]
+
+# mutmut 3.x 설정(2026-09-27, github.com/boxed/mutmut 소스로 키 이름 확인).
+# GitHub Actions 에서만 실행한다: mutmut 는 네이티브 Windows 를 지원하지 않는다(자체 확인,
+# "please use the WSL" 오류). 전체를 매번 돌리면 느려 scripts/changed_functions.py 로 이번에
+# 바뀐 함수만 골라 `mutmut run "*모듈.함수*"` 로 넘긴다(.github/workflows/mutation.yml).
+# 실제 변이체 이름은 `모듈.x__함수__mutmut_N`(mutmut 이 함수 이름 앞에 x__ 를 붙인다,
+# 2026-09-27 실행 로그로 확인) 이라 양쪽에 * 를 둬서 접두어를 예측하지 않는다.
+[tool.mutmut]
+source_paths = ["src/"]
+# std/data·templates: 패키지 데이터라 임포트에 필요. scripts/: tests/ 일부가 경로로 직접
+# 불러온다(2026-09-27 실측: 첫 실행에서 mutants/ 에 scripts/ 가 없어 기준 테스트가 깨짐).
+also_copy = ["src/audit_kit/std/data", "src/audit_kit/templates", "scripts"]
+pytest_add_cli_args_test_selection = ["tests/"]

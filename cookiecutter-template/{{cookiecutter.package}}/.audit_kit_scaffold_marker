@@ -1,0 +1,2 @@
+Cookiecutter가 프로젝트 폴더를 만들기 위해 필요한 자리표시자 파일이다.
+실제 내용은 전부 hooks/post_gen_project.py 가 만든다 — 이 파일은 그 훅이 끝나면서 지운다.

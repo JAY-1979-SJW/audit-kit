@@ -1,0 +1,92 @@
+# 03. PYTHON 공통 ruff 설정 — 하위 모든 프로젝트에 자동 적용된다.
+# 프로젝트에 자체 [tool.ruff]가 있으면 거기에 extend = "../ruff.toml" 을 넣는다.
+# 설계서: docs/개발표준_설계서.md
+# 규칙 목록: https://docs.astral.sh/ruff/rules/
+
+target-version = "py311"   # 기존 프로젝트(3.11 venv) 호환. 새 프로젝트는 pyproject에서 py314로 올린다.
+line-length = 100
+preview = true             # PLW1514(open()에 encoding 누락) 사용에 필요
+extend-exclude = [
+    "*backup*", "*_backup_*", "*백업*", "venv", ".venv", "env", "build", "dist",
+    "chrome-headless-shell-win64",
+]
+
+[lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes: 미사용 import(F401), 재정의(F811), 미사용 변수(F841)
+    "I",        # import 정렬
+    "B",        # bugbear: 흔한 버그 패턴
+    "UP",       # 최신 문법 (PEP 585/604)
+    "SIM",      # 중복·불필요한 분기 단순화
+    "PL",       # pylint 규칙 (복잡도, encoding 누락 PLW1514 등)
+    "RUF",
+    "C90",      # 순환 복잡도
+    "ERA",      # 주석 처리된 죽은 코드
+    "PTH",      # os.path 대신 pathlib
+    "T20",      # print 대신 logging
+    "BLE",      # except Exception 남용
+    "ARG",      # 미사용 인자
+    "PIE",      # 불필요한 pass/중복 코드
+    "PERF",     # 효율: 불필요한 리스트 재구성, 반복문 안 수동 컴프리헨션 (EFF-01)
+    "C4",       # 불필요한 컴프리헨션·형변환 (EFF-01)
+    "S",        # 보안: 비밀값 하드코딩, 예외 삼키기, shell=True (STD-04, STD-09, ERR-03)
+]
+ignore = [
+    "PLR2004",  # 매직 넘버 — 자동화 스크립트에서 과도함
+    "E501",     # 줄 길이는 formatter에 맡김
+    "RUF001", "RUF002", "RUF003",  # 한글/전각 문자 오탐
+]
+
+[lint.flake8-bugbear]
+# FastAPI 의존성 주입 관례(기본 인자에 Depends()/Query() 등 호출) — ruff 공식 문서가 명시한
+# B008 예외 처리 방법(2026-09-29 WebFetch로 확인: docs.astral.sh/ruff/rules/function-call-in-default-argument/,
+# "Calls... can be marked as an exception... with extend-immutable-calls"). 이게 없으면 FastAPI
+# 프로젝트마다 이 관례적 패턴 전체가 오탐으로 잡힌다(다른 프로젝트 실측: B008 706건 대부분 Depends()).
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body",
+    "fastapi.Header", "fastapi.Cookie", "fastapi.Form", "fastapi.File", "fastapi.Security",
+]
+
+[lint.mccabe]
+max-complexity = 10
+
+[lint.pylint]
+max-args = 6
+max-branches = 12
+max-returns = 6
+max-statements = 50
+
+[lint.per-file-ignores]
+"tests/**" = ["ARG", "PLR", "PLC0415", "T20", "S", "RUF012"]
+"**/test_*.py" = ["ARG", "PLR", "PLC0415", "T20", "S", "RUF012"]
+# RUF012(가변 기본값 클래스 속성) 추가 근거(다른 프로젝트, 2026-09-29 실측):
+# 39건 전수 확인 결과 전부 테스트용 상수 목록(IN_SCOPE_MODULES 등)이나 Fake/Mock 클래스의
+# 클래스 속성(FakeReport.cafes = [] 등) — 테스트 클래스는 보통 한 번만 인스턴스화되고
+# 이 속성들을 재대입하지 않아 인스턴스 간 공유로 인한 실제 위험이 없음. 다만 이건 애플리케이션
+# 코드에서는(같은 클래스가 여러 인스턴스로 반복 생성되면) 진짜 버그가 될 수 있어 tests/** 밖은
+# 여전히 잡는다(개별 사례는 ClassVar 로 의도 명시 — cdp_popup_manager.py 등).
+"**/scripts/**" = ["T20", "S"]   # tests/** 와 같은 이유로 S(보안) 완화 — B(bugbear)는 그대로 유지.
+# 실측(다른 프로젝트, 2026-09-29): scripts/** 264건이 전부 S110(try-except-pass) —
+# 그 프로젝트 자체 ruff.toml 은 scripts/**="S","B" 로 이미 완화해 둔 상태였고, 표준 번들에는
+# scripts/** 가 T20 만 있어 이 간극이 "치명" 오탐 265건 중 264건의 원인이었다. B는 tests/** 도
+# 완화하지 않는 카테고리라(가변 기본 인자 등은 위치와 무관하게 실제 버그) 여기서도 올리지 않는다.
+"**/cli.py" = ["T20"]                     # CLI 진입 모듈은 stdout 출력이 정상 동작
+"**/commands.py" = ["T20"]
+"**/__main__.py" = ["T20"]
+"**/hooks/**" = ["T20", "S404", "S603", "S607"]   # hook 은 stdout/stderr 출력과 subprocess 호출이 정상 동작
+"**/hook.py" = ["T20"]                    # 위와 같은 이유(hooks/ 폴더가 아니라 파일 하나뿐인 경우)
+# 아래는 audit-kit 처럼 명령 하나당 파일 하나로 나눈 구조에서, 그 파일 전체가 cli.py 와
+# 똑같이 "CLI 서브커맨드 구현체라 stdout 출력이 결과"인 경우다(2026-09-28, audit-kit 자체
+# STD-03 감사에서 cli.py 만 빠져 있던 걸 발견). 같은 패턴을 쓰는 다른 프로젝트도 여기 추가한다.
+"**/structfix.py" = ["T20"]
+"**/fixflow.py" = ["T20"]
+"**/tangle.py" = ["T20"]
+"**/ghcheck.py" = ["T20"]
+"**/baseline.py" = ["T20"]
+"**/cilocal.py" = ["T20"]
+"**/deps.py" = ["T20"]
+"**/newproj.py" = ["T20"]
+
+[format]
+quote-style = "double"
