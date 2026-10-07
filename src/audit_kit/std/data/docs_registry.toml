@@ -881,7 +881,7 @@ domains = ["playwright.dev"]
 notes = [
     "connect_over_cdp: 이미 떠 있는 Chromium 계열 브라우저에 CDP 로 붙는다. 공식 문서: Playwright 프로토콜 연결보다 충실도가 크게 낮고 일부 기능이 동작하지 않을 수 있음(Playwright 인자로 띄운 브라우저가 아니면)",
     "기존 브라우저의 기본 컨텍스트는 browser.contexts[0] 으로 접근한다(새로 만들어지지 않음). 연결 timeout 기본 30초",
-    "같은 브라우저를 여러 도구가 CDP 로 쓰면 포트가 겹치지 않게 --remote-debugging-port 를 도구마다 다르게 지정할 것(이 PC: 9222 orchestrator, 9333 Electron, 9444 g2b 점검)",
+    "같은 브라우저를 여러 도구가 CDP 로 쓰면 포트가 겹치지 않게 --remote-debugging-port 를 도구마다 다르게 지정할 것(예: 도구마다 9222·9333·9444 처럼 서로 다른 포트)",
 ]
 verified = "AI 추가, 사람 확인 전 (2026-09-30, 사이트 점검 세션) — connect_over_cdp 문서만 확인, 나머지 API 는 미확인"
 

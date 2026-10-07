@@ -123,3 +123,40 @@ def test_self_matching_pattern_is_not_a_forbidden_term(tmp_path):
 
 def test_forbidden_lines_returns_numbers_only():
     assert ss.forbidden_lines("a\nbad here\nc\nbad again\n", [re.compile("bad")]) == [2, 4]
+
+
+def test_regression_guard_blocks_when_a_public_line_reverts_to_private_wording(tmp_path, capsys):
+    """공개 번들의 일반 문구가 원본의 사설 문구로 되돌아가는데 치환 규칙이 못 잡으면: diff 를 보여 주고 아무것도 쓰지 않는다."""
+    repo = make_repo(tmp_path)
+    map_path = write_map(tmp_path / "map.txt", "never_matches_anything_zzz => x\n")
+    public_line = "port = 9222  # 예: 도구마다 서로 다른 포트\n"
+    private_line = "port = 9222  # 이 PC 전용 구성 설명\n"
+    src = make_source(tmp_path)
+    (src / "standard" / "rules.toml").write_text(public_line, encoding="utf-8")
+    assert run_sync(tmp_path, src, map_path, repo=repo) == 0  # 최초 동기화: 비교할 기존 번들 없음
+    capsys.readouterr()
+    (src / "standard" / "rules.toml").write_text(private_line, encoding="utf-8")  # 원본이 사설 문구로 바뀜 + 기존 번들엔 공개 문구
+    assert run_sync(tmp_path, src, map_path, repo=repo) == 3
+    err = capsys.readouterr().err
+    assert "회귀 가드" in err and "-port = 9222  # 예: 도구마다 서로 다른 포트" in err and "+port = 9222  # 이 PC 전용 구성 설명" in err
+    assert (repo / "data" / "rules.toml").read_text(encoding="utf-8") == public_line  # 쓰지 않았다
+    # 사람이 diff 를 확인하고 의도한 변경이라고 알리면 반영된다
+    assert ss.sync(src, target=repo / "data", scrub_map=map_path, forbidden=tmp_path / "none.txt", root=repo, hygiene=False, accept_changed=True) == 0
+    assert (repo / "data" / "rules.toml").read_text(encoding="utf-8") == private_line
+
+
+def test_regression_guard_ignores_pure_additions(tmp_path):
+    repo = make_repo(tmp_path)
+    map_path = write_map(tmp_path / "map.txt", "never_matches_anything_zzz => x\n")
+    src = make_source(tmp_path)
+    (src / "standard" / "rules.toml").write_text("a = 1\n", encoding="utf-8")
+    assert run_sync(tmp_path, src, map_path, repo=repo) == 0
+    (src / "standard" / "rules.toml").write_text("a = 1\nb = 2\n", encoding="utf-8")  # 새 줄만 추가
+    assert run_sync(tmp_path, src, map_path, repo=repo) == 0
+    assert (repo / "data" / "rules.toml").read_text(encoding="utf-8") == "a = 1\nb = 2\n"
+
+
+def test_changed_existing_lines_reports_only_when_old_lines_vanish():
+    assert ss.changed_existing_lines(b"a\nb\n", b"a\nb\nc\n") == []
+    diff = ss.changed_existing_lines(b"a\nb\n", b"a\nB\n")
+    assert any(line == "-b" for line in diff) and any(line == "+B" for line in diff)

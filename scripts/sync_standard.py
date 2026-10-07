@@ -8,6 +8,8 @@
   2. 원본 텍스트에 치환표를 적용한 결과를 std/data 에 쓴다.
   3. 쓴 파일과 git 추적 파일을 금지어로 다시 검사한다 — 치환표의 패턴 + scrub_forbidden.local.txt 의 추가 금지어. 하나라도 걸리면 실패한다.
   4. scripts/check_public_hygiene.py(일반 규칙)를 실행한다. 위반이 있으면 실패한다.
+  5. 회귀 가드: 공개 번들에 **이미 있던 줄이 바뀌거나 사라지면**(예: 공개용 일반 문구가 원본의 사설 문구로 되돌아감) 그 diff 를 출력하고
+     아무것도 쓰지 않은 채 종료코드 3 으로 멈춘다. 사람이 diff 를 확인한 뒤 의도한 변경이면 `--accept-changed` 로 다시 실행한다.
 치환표·금지어 목록은 사설 이름 자체가 정보이므로 *.local.txt(.gitignore 대상)에만 둔다. 출력에는 걸린 줄의 내용·패턴을 찍지 않고 `파일:줄` 만 찍는다.
 
 치환표 형식(줄마다 하나): `정규식 => 치환문자열`  (`#` 으로 시작하는 줄과 빈 줄은 무시, 위에서 아래로 차례로 적용)
@@ -18,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import re
 import subprocess
@@ -137,12 +140,21 @@ def tracked_text_files(root: Path) -> list[Path]:
     return [root / rel for rel in proc.stdout.decode("utf-8", errors="replace").split("\0") if rel]
 
 
-def check_forbidden(root: Path, target: Path, patterns: list[re.Pattern[str]]) -> list[str]:
-    """쓴 번들 파일 + git 추적 파일에서 금지어를 찾는다. 결과는 `경로:줄` 목록."""
+def check_forbidden_content(content: dict[str, bytes], patterns: list[re.Pattern[str]]) -> list[str]:
+    """아직 쓰지 않은 스크러브 결과(메모리)에서 금지어를 찾는다. 결과는 `std/data/<이름>:줄` 목록."""
+    hits: list[str] = []
+    for name, data in content.items():
+        hits += [f"std/data/{name}:{n}" for n in forbidden_lines(data.decode("utf-8", errors="replace"), patterns)]
+    return hits
+
+
+def check_forbidden(root: Path, target: Path, patterns: list[re.Pattern[str]], *, skip_bundle: bool = False) -> list[str]:
+    """git 추적 파일에서 금지어를 찾는다(skip_bundle 이면 번들 3파일은 건너뜀 — 새 결과는 메모리에서 따로 검사). 결과는 `경로:줄` 목록."""
     hits: list[str] = []
     seen: set[Path] = set()
-    for path in [*(target / n for n in FILES), *tracked_text_files(root)]:
-        if path in seen or not path.is_file():
+    bundle = {target / n for n in FILES}
+    for path in [*(() if skip_bundle else bundle), *tracked_text_files(root)]:
+        if path in seen or not path.is_file() or (skip_bundle and path in bundle):
             continue
         seen.add(path)
         try:
@@ -152,6 +164,28 @@ def check_forbidden(root: Path, target: Path, patterns: list[re.Pattern[str]]) -
         rel = path.relative_to(root).as_posix() if path.is_relative_to(root) else path.name
         hits += [f"{rel}:{n}" for n in forbidden_lines(text, patterns)]
     return hits
+
+
+def changed_existing_lines(old: bytes, new: bytes) -> list[str]:
+    """공개 번들에 이미 있던 줄 중 새 결과에 없는 줄이 있으면 그 unified diff(줄 단위)를, 없으면 빈 목록을 돌려준다. 순수 추가는 변경으로 보지 않는다."""
+    old_lines = old.decode("utf-8", errors="replace").splitlines()
+    new_lines = new.decode("utf-8", errors="replace").splitlines()
+    if not (set(old_lines) - set(new_lines)):
+        return []
+    return list(difflib.unified_diff(old_lines, new_lines, "공개 번들(기존)", "스크러브 결과(신규)", lineterm="", n=0))
+
+
+def regression_report(target: Path, content: dict[str, bytes]) -> list[str]:
+    """기존 번들 파일이 있는 것만 대조한다. 반환은 사람이 볼 diff 출력 줄들(변경 없으면 빈 목록)."""
+    out: list[str] = []
+    for name, data in content.items():
+        existing = target / name
+        if not existing.is_file():
+            continue
+        diff = changed_existing_lines(existing.read_bytes(), data)
+        if diff:
+            out += [f"=== std/data/{name}: 공개 번들에 있던 줄이 바뀌거나 사라짐 ===", *diff]
+    return out
 
 
 def run_hygiene(root: Path) -> int:
@@ -172,6 +206,7 @@ def sync(
     forbidden: Path = FORBIDDEN,
     root: Path = ROOT,
     hygiene: bool = True,
+    accept_changed: bool = False,
 ) -> int:
     missing = [rel for rel in FILES.values() if not (source / rel).is_file()]
     if missing:
@@ -184,18 +219,25 @@ def sync(
         print(f"동기화를 거부합니다(fail-closed): {exc}", file=sys.stderr)
         return 1
     content = scrubbed_source(source, rules)
+    hits = check_forbidden_content(content, patterns) + check_forbidden(root, target, patterns, skip_bundle=True)
+    if hits:
+        print(f"금지어 검사 실패 — {len(hits)}곳 (줄 내용은 출력하지 않음, 아무것도 쓰지 않았습니다):", file=sys.stderr)
+        for hit in hits[:50]:
+            print(f"  {hit}", file=sys.stderr)
+        return 1
+    print("금지어 검사: 0곳")
+    report = regression_report(target, content)
+    if report and not accept_changed:
+        print("회귀 가드: 공개 번들에 이미 있던 줄이 바뀝니다. diff 를 확인하세요(아무것도 쓰지 않았습니다):", file=sys.stderr)
+        for line in report:
+            print(line, file=sys.stderr)
+        print("의도한 변경이면 --accept-changed 로 다시 실행하세요.", file=sys.stderr)
+        return 3
     target.mkdir(parents=True, exist_ok=True)
     for name, data in content.items():
         (target / name).write_bytes(data)
         print(f"복사(스크러브): {FILES[name]} -> std/data/{name}")
     write_version_stamp(source, target)
-    hits = check_forbidden(root, target, patterns)
-    if hits:
-        print(f"금지어 검사 실패 — {len(hits)}곳 (줄 내용은 출력하지 않음):", file=sys.stderr)
-        for hit in hits[:50]:
-            print(f"  {hit}", file=sys.stderr)
-        return 1
-    print("금지어 검사: 0곳")
     if hygiene and run_hygiene(root) != 0:
         print("위생 검사 실패", file=sys.stderr)
         return 1
@@ -209,8 +251,9 @@ def main(argv: list) -> int:
     ap.add_argument("source", nargs="?", type=Path, default=DEFAULT_SOURCE)
     ap.add_argument("--scrub-map", type=Path, default=SCRUB_MAP)
     ap.add_argument("--forbidden", type=Path, default=FORBIDDEN)
+    ap.add_argument("--accept-changed", action="store_true", help="공개 번들에 있던 줄이 바뀌는 diff 를 확인했고 의도한 변경이다")
     args = ap.parse_args(argv[1:])
-    return sync(args.source, scrub_map=args.scrub_map, forbidden=args.forbidden)
+    return sync(args.source, scrub_map=args.scrub_map, forbidden=args.forbidden, accept_changed=args.accept_changed)
 
 
 if __name__ == "__main__":
