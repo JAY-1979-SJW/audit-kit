@@ -1,4 +1,4 @@
-# 개발 기준서 규칙 원장 (v3, 2026-10-08 — STD-13~16, ERR-10~15, FE-10/11, OPS-18 추가)
+# 개발 기준서 규칙 원장 (v3, 2026-10-08 — STD-13~16, ERR-10~17, FE-10/11, OPS-18 추가)
 # 모든 규칙은 근거(source)와 검사 방법(check)을 가진다. 근거 없는 규칙은 넣지 않는다.
 # check.kind: ruff = ruff 규칙 ID / tool = 외부 도구 / custom = audit-kit std 가 직접 구현(AST) / manual = 사람·리뷰
 # severity: critical(반드시 수정) / improve(개선) / info(참고)
@@ -329,6 +329,22 @@ title = "고정 포트·실제 외부 프로세스를 쓰는 테스트는 병렬
 severity = "info"
 check = { kind = "manual", how = "고정 포트 서버를 띄우는 테스트는 @pytest.mark.xdist_group 으로 묶고 --dist loadgroup 으로 한 워커에 몰거나, 포트 0(임의 포트)을 쓴다. Playwright 로 고정 포트 데스크톱/서버 앱을 E2E 할 때는 playwright.config 에 workers: 1. 병렬 워커가 같은 포트를 잡으면 '이미 사용 중' 또는 남의 인스턴스에 붙어 간헐 실패한다" }
 source = "https://pytest-xdist.readthedocs.io/en/stable/distribution.html , https://playwright.dev/docs/test-parallel#disable-parallelism"
+
+# 2026-10-08: 아래 ERR-16/17 은 대표님 결정(변이 테스트는 mutmut 로 표준화, AI 의 "코드 깨뜨려 보고 되돌리기" 임시 확인 금지)과
+# 다른 저장소 PR 에서 실측한 교훈이다. 정적 검사가 어려워 manual 이다.
+[[rule]]
+id = "ERR-16"
+title = "변이 테스트는 mutmut 로 표준화한다 — CI 리눅스 러너에서 PR 의 변경 함수만 돌리고, 범위 축소·실패 비은닉·점수 정직 계산을 지킨다"
+severity = "info"      # 점수 문턱은 실측 전이라 보고 전용. 문턱을 정한 뒤에 등급을 올린다
+check = { kind = "manual", how = "(1) 방식: 시험이 코드를 실제로 잡는지는 mutmut 3.x 로만 잰다. AI 가 소스를 임의로 깨뜨려 보고 되돌리는 임시 확인은 금지(토큰·시간 낭비, 재현 불가). (2) 환경: mutmut 3.x 는 네이티브 Windows 를 거부하므로 CI 리눅스 러너(Windows 에서는 WSL2)에서 PR 마다 실행한다. (3) 대상: base 대비 `git diff -U0` 로 바뀐 줄을 찾고 AST 로 그 줄을 담은 함수만 mutmut 이름 패턴으로 넘긴다 — 함수 `모듈.x_함수__mutmut_*`, 메서드 `모듈.xǁ클래스ǁ메서드__mutmut_*`(구분자는 `ǁ`, 클래스 앞뒤 공백 없음). (4) 성능: 실행 시 `[tool.mutmut] source_paths` 를 바뀐 파일만으로 덮어쓰고(저장소 전체 생성은 466k 변이체·14분, 바뀐 파일만은 약 1분), 시험 선택도 바뀐 모듈을 직접 참조하는 시험으로 덮어쓴다. 대상 시험이 0개면 건너뛰고 건너뛰었다고 출력한다. (5) 사본 복사: `also_copy` 에 시험이 import 하는 루트 shim 모듈·conftest·시험이 읽는 데이터를 넣는다. 빠지면 stats 단계가 실패한다. (6) 실패를 숨기지 않는다: `mutmut run || true` 는 'failed to collect stats' 를 가리므로 그 문구를 검출해 단계를 실패시킨다. killed/survived/no_tests 를 따로 보고하고, 점수는 killed/(killed+survived) 로 계산한다(export-cicd-stats 의 total 은 이번 실행이 아니라 누적값). killed+survived 가 0 이면 성공이 아니라 경고를 출력한다. (7) 문턱: 처음엔 보고 전용(빌드 실패 안 시킴), 실측 후에 통과 기준을 정한다" }
+source = "https://github.com/boxed/mutmut , https://mutmut.readthedocs.io/en/latest/"   # mutmut 3.x 구성(source_paths/also_copy)·export-cicd-stats 동작은 3.17 절에 소스로 확인한 내용 참조
+
+[[rule]]
+id = "ERR-17"
+title = "변이 점수를 부풀리지 않는다 — pragma: no mutate·함수 제외로 점수를 올리지 말고, 동등 변이체는 사유와 함께 목록화하며, 검사기의 탐지력은 고정 시험(심은 위반 → 기대 FAIL)으로 둔다"
+severity = "info"
+check = { kind = "manual", how = "`# pragma: no mutate` 와 mutmut 설정의 함수 제외는 점수를 올릴 목적으로 쓰지 않는다(로깅·타입 힌트처럼 의미가 없는 곳에 한해 사유를 적는다). 시험으로 잡을 수 없는 동등 변이체(결과가 같은 변이)는 변이체 이름과 사유를 목록으로 남긴다. 게이트·검사기가 위반을 실제로 잡는지(탐지력)는 일회성 수동 실험이 아니라 '위반을 심은 입력 → 기대 FAIL' 을 고정 시험으로 만들어 회귀에서 계속 확인한다" }
+source = "https://mutmut.readthedocs.io/en/latest/"
 
 # ---------------------------------------------------------------- 훅 판정 로그 태그 (LOG)
 # 아래 2개는 개별 정책이 아니라 py_stats.py 집계에 실제로 찍히는 "전체 판정" 로그 태그다.
