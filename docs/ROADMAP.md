@@ -59,6 +59,12 @@
     privacy/apm/deployment-doc/community-files 존재 확인. `rules.py`의 `CATEGORY`에 누락됐던 `SEC` 라벨도
     보충. 저장소 루트에 audit-kit 자신도 OPS-01/07/16 실제 적용(LICENSE·CODEOWNERS·dependabot.yml 등).
     세션 전체 기록은 작성자의 로컬 개발 목록(저장소에 포함하지 않음) 9번 항목
+  - [x] 기준서 원장 v3 (2026-10-08): 다른 프로젝트 실측 교훈 13개 조항(STD-13~16, ERR-10~15,
+    FE-10/11, OPS-18) 추가. 직접 구현 검사 6개(STDIO-RECONFIGURE-PARTIAL, SILENT-GATE-PASS,
+    PYINSTALLER-ENTRY-RELATIVE-IMPORT, EXCL-LOCK-NO-PERMISSION-ERROR, SCATTERED-PARENTS-ROOT,
+    INIT-SUBPACKAGE-REEXPORT), ruff A005(strict) 활성화, std-ruff 단계 무음 통과 수정.
+    **후속**: 원본 기준서 저장소의 standard/rules.toml·project/ruff.toml 에 같은 변경을
+    반영해야 다음 `sync_standard.py` 때 덮어써지지 않는다.
 - [x] 2단계 `new` 커맨드 (2026-09-27): 아래 "2단계" 절 참고. **서브에이전트가 아니라 audit-kit CLI 커맨드 + 별도 Skill**로 구현 — 서브에이전트는 사용자에게 질문할 수 없어(35. 기준서 작성 체계가 실측으로 확인) `/design` 의 대화형 질문 단계를 처리할 수 없기 때문. `/design` Skill 오케스트레이션(사용자 질문 → 확정 → `audit-kit new` 호출 → `/new-project-standard` 연계)은 이 저장소 밖(`~/.claude/skills/`)에서 별도 진행 중
   - [x] 6개 유형 전부 ruff/mypy/pytest e2e 자동 검증(2026-09-28): 이전엔 library 유형만 자동 검증됐음.
     파라미터화해서 실제로 돌려보니 db concern 있는 유형(fastapi/cli)에서 alembic head 0개로

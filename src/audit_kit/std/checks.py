@@ -1135,6 +1135,232 @@ def check_vacuous_collection_assert(tree: ast.AST, rel: str) -> list:
     return hits
 
 
+# ------------------------------------------------ 2026-10-07/08 실측 교훈 (STD-14, ERR-10, ERR-13)
+# 셋 다 다른 프로젝트에서 실제 사고로 확인된 패턴이다. 휴리스틱이라 범위를 좁게 잡는다.
+def _is_sys_stream_reconfigure(call: ast.Call, stream: str) -> bool:
+    """`sys.<stream>.reconfigure(...)` 직접 호출인가."""
+    f = call.func
+    return (
+        isinstance(f, ast.Attribute)
+        and f.attr == "reconfigure"
+        and isinstance(f.value, ast.Attribute)
+        and f.value.attr == stream
+        and isinstance(f.value.value, ast.Name)
+        and f.value.value.id == "sys"
+    )
+
+
+def check_stdio_reconfigure_partial(tree: ast.AST, rel: str) -> list:
+    """STD-14: sys.stdout 만(또는 sys.stderr 만) UTF-8 로 reconfigure 한 파일.
+
+    Windows 콘솔·리다이렉트(cp949)에서 다른 쪽 스트림으로 한글을 쓰면 UnicodeEncodeError 로
+    죽는다 — 오류 메시지를 stderr 로 내는 바로 그 순간에 죽어 원인도 안 남는다. 두 스트림을
+    루프로 함께 바꾸는 코드(`for s in (sys.stdout, sys.stderr): s.reconfigure(...)`)는 직접
+    호출이 아니라 잡히지 않는다(정상).
+    """
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+    out_calls = [c for c in calls if _is_sys_stream_reconfigure(c, "stdout")]
+    err_calls = [c for c in calls if _is_sys_stream_reconfigure(c, "stderr")]
+    if bool(out_calls) == bool(err_calls):
+        return []
+    done, missing = ("stdout", "stderr") if out_calls else ("stderr", "stdout")
+    first = (out_calls or err_calls)[0]
+    return [
+        Hit(
+            "STDIO-RECONFIGURE-PARTIAL",
+            rel,
+            first.lineno,
+            f"sys.{done} 만 reconfigure — sys.{missing} 도 같은 인코딩으로 바꾸거나 "
+            "PYTHONUTF8=1 로 실행한다(안 그러면 cp949 콘솔에서 한글 출력 시 UnicodeEncodeError)",
+        )
+    ]
+
+
+GATE_FILE_RE = re.compile(r"(?i)gate|check")
+
+
+def _is_silent_value(value: object) -> bool:
+    """None/False/True/0/"" — 실패를 뜻하는 `return 1`·`return 2` 는 아니다(1 == True 함정 주의)."""
+    if value is None or isinstance(value, bool):
+        return True
+    return (type(value) is int and value == 0) or (isinstance(value, str) and not value)
+
+
+def _is_gate_file(rel: str) -> bool:
+    path = Path(rel)
+    if "tests" in path.parts or path.name.startswith(("test_", "conftest")):
+        return False
+    return bool(GATE_FILE_RE.search(path.stem))
+
+
+def _calls_subprocess(nodes, aliases: dict) -> bool:
+    return any(
+        isinstance(n, ast.Call) and _is_subprocess_call(n, aliases)
+        for stmt in nodes
+        for n in ast.walk(stmt)
+    )
+
+
+def _is_silent_handler(handler: ast.ExceptHandler) -> bool:
+    """except 본문이 `return []`/`return 0`/`return None`/`pass`/`continue` 한 줄뿐인가."""
+    if len(handler.body) != 1:
+        return False
+    stmt = handler.body[0]
+    if isinstance(stmt, (ast.Pass, ast.Continue)):
+        return True
+    if not isinstance(stmt, ast.Return):
+        return False
+    v = stmt.value
+    if v is None:
+        return True
+    if isinstance(v, ast.Constant):
+        return _is_silent_value(v.value)
+    return isinstance(v, (ast.List, ast.Dict, ast.Set, ast.Tuple)) and _is_empty_container_init(v)
+
+
+def _is_empty_output_default(node: ast.AST) -> bool:
+    """`proc.stdout or "[]"` 처럼 빈 출력을 '결과 0건'으로 바꾸는 식인가."""
+    if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or) and len(node.values) == 2):
+        return False
+    left, right = node.values
+    return (
+        isinstance(left, ast.Attribute)
+        and left.attr == "stdout"
+        and isinstance(right, ast.Constant)
+        and right.value in {"[]", "{}"}
+    )
+
+
+def check_silent_gate_pass(tree: ast.AST, rel: str) -> list:
+    """ERR-10: 게이트·검사 스크립트가 도구를 못 돌렸을 때 '0건 통과'로 조용히 넘어가는 패턴.
+
+    이름에 gate/check 가 들어간 파일(테스트 제외)만 본다. 잡는 것:
+    ① `if <경로>.exists():` 안에서만 subprocess 로 게이트를 돌리고 else 가 없음(대상이 없으면 건너뜀)
+    ② subprocess 호출을 감싼 try 의 except 가 `return []`/`return 0`/`pass` 뿐(도구 없음 = 0건)
+    ③ `proc.stdout or "[]"` (빈 출력 = 0건, 종료코드 무시)
+    """
+    if not _is_gate_file(rel):
+        return []
+    aliases = import_aliases(tree)
+    hits = []
+    for n in ast.walk(tree):
+        if (
+            isinstance(n, ast.If)
+            and not n.orelse
+            and _condition_is_existence_only(n.test)
+            and not any(
+                isinstance(u, ast.UnaryOp) and isinstance(u.op, ast.Not) for u in ast.walk(n.test)
+            )
+            and _calls_subprocess(n.body, aliases)
+        ):
+            hits.append(
+                Hit(
+                    "SILENT-GATE-PASS",
+                    rel,
+                    n.lineno,
+                    "대상 파일이 있을 때만 게이트를 실행하고 없으면 조용히 건너뜀 — "
+                    "없으면 실패로 보고해야 한다(else: 실패)",
+                )
+            )
+        elif (
+            isinstance(n, ast.Try)
+            and _calls_subprocess(n.body, aliases)
+            and any(_is_silent_handler(h) for h in n.handlers)
+        ):
+            hits.append(
+                Hit(
+                    "SILENT-GATE-PASS",
+                    rel,
+                    n.lineno,
+                    "도구 실행 실패(미설치·오류)를 except 에서 '결과 없음'으로 바꿈 — "
+                    "검사를 못 돌렸으면 실패로 보고해야 한다",
+                )
+            )
+        elif _is_empty_output_default(n):
+            hits.append(
+                Hit(
+                    "SILENT-GATE-PASS",
+                    rel,
+                    getattr(n, "lineno", 1),
+                    '빈 출력을 "0건"으로 간주(stdout or "[]") — 종료코드(≥2)와 빈 출력을 '
+                    "실패로 확인해야 한다",
+                )
+            )
+    return hits
+
+
+_LOCK_OK_EXCEPTIONS = {"PermissionError", "OSError", *BROAD_EXCEPTION_NAMES}
+
+
+def _creates_exclusively(call: ast.Call) -> bool:
+    """os.open(..., ...O_EXCL...) 또는 open(path, "x"...) 인가."""
+    f = call.func
+    if (
+        isinstance(f, ast.Attribute)
+        and f.attr == "open"
+        and isinstance(f.value, ast.Name)
+        and f.value.id == "os"
+    ):
+        return any(
+            isinstance(n, ast.Attribute) and n.attr == "O_EXCL"
+            for a in call.args[1:2]
+            for n in ast.walk(a)
+        )
+    if isinstance(f, ast.Name) and f.id == "open":
+        return "x" in _open_mode(call)
+    return False
+
+
+def _open_mode(call: ast.Call) -> str:
+    mode = (
+        call.args[1]
+        if len(call.args) > 1
+        else next((k.value for k in call.keywords if k.arg == "mode"), None)
+    )
+    return mode.value if isinstance(mode, ast.Constant) and isinstance(mode.value, str) else ""
+
+
+def _handler_names(handler: ast.ExceptHandler) -> set:
+    t = handler.type
+    if t is None:
+        return {"BaseException"}
+    elts = t.elts if isinstance(t, ast.Tuple) else [t]
+    return {e.id if isinstance(e, ast.Name) else getattr(e, "attr", "") for e in elts}
+
+
+def check_excl_lock_permission_error(tree: ast.AST, rel: str) -> list:
+    """ERR-13: O_CREAT|O_EXCL(또는 open(..., "x")) 잠금 파일 생성이 FileExistsError 만 잡음.
+
+    Windows 에서는 다른 프로세스가 지운(삭제 대기 중인) 잠금 파일을 다시 만들면
+    ERROR_ACCESS_DENIED → PermissionError 가 난다. 이것도 '잠김'으로 보고 타임아웃까지 재시도해야
+    한다 — FileExistsError 만 잡으면 잠금 경합 순간에 프로세스가 죽는다.
+    """
+    hits = []
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Try):
+            continue
+        creates = [
+            c
+            for stmt in n.body
+            for c in ast.walk(stmt)
+            if isinstance(c, ast.Call) and _creates_exclusively(c)
+        ]
+        if not creates:
+            continue
+        names = set().union(*(_handler_names(h) for h in n.handlers)) if n.handlers else set()
+        if "FileExistsError" in names and not names & _LOCK_OK_EXCEPTIONS:
+            hits.append(
+                Hit(
+                    "EXCL-LOCK-NO-PERMISSION-ERROR",
+                    rel,
+                    creates[0].lineno,
+                    "배타적 잠금 파일 생성에서 FileExistsError 만 잡음 — Windows 삭제 대기 중인 "
+                    "파일은 PermissionError 가 나므로 이것도 '잠김'으로 보고 타임아웃까지 재시도",
+                )
+            )
+    return hits
+
+
 FILE_CHECKS = [
     check_abs_path_literal,
     check_io_in_loop,
@@ -1146,6 +1372,9 @@ FILE_CHECKS = [
     check_hook_entrypoint_guarded,
     check_existence_only_gating,
     check_vacuous_collection_assert,
+    check_stdio_reconfigure_partial,
+    check_silent_gate_pass,
+    check_excl_lock_permission_error,
 ]
 
 
@@ -1310,6 +1539,196 @@ def check_pytest_settings(root: Path) -> list:
             "pytest 설정에 없음: " + ", ".join(missing),
         )
     ]
+
+
+# ------------------------------------------------ 2026-10-07/08 실측 교훈 (ERR-12, STD-15, STD-16)
+SPEC_SKIP_DIRS = {"build", "dist"}
+MIN_HAND_HIDDENIMPORTS = 2
+MIN_SCATTERED_ROOT_FILES = 3
+
+
+def _spec_files(root: Path) -> list:
+    """프로젝트 안의 PyInstaller .spec 파일(가상환경·빌드 산출물 제외)."""
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root, onerror=lambda _exc: None):
+        parts = [p.lower() for p in Path(dirpath).relative_to(root).parts]
+        if any(k in part for part in parts for k in SKIP_TREE_KEYWORDS) or (
+            parts and parts[0] in SPEC_SKIP_DIRS
+        ):
+            dirnames[:] = []
+            continue
+        found.extend(Path(dirpath) / f for f in filenames if f.endswith(".spec"))
+    return sorted(found)
+
+
+def _str_list(node: ast.AST | None) -> list:
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return []
+    return [e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+
+
+def _analysis_calls(tree: ast.AST) -> list:
+    return [n for n in ast.walk(tree) if isinstance(n, ast.Call) and call_name(n) == "Analysis"]
+
+
+def _relative_import_line(entry: Path) -> int | None:
+    try:
+        tree = ast.parse(read_text(entry))
+    except (SyntaxError, ValueError, OSError):
+        return None
+    lines = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level > 0]
+    return min(lines) if lines else None
+
+
+def _local_packages(base: Path) -> set:
+    try:
+        return {d.name for d in base.iterdir() if (d / "__init__.py").is_file()}
+    except OSError:
+        return set()
+
+
+def _spec_hits(root: Path, spec: Path, call: ast.Call) -> list:
+    hits = []
+    kw = {k.arg: k.value for k in call.keywords if k.arg}
+    scripts = _str_list(call.args[0] if call.args else kw.get("scripts"))
+    for script in scripts:
+        entry = spec.parent / script
+        line = _relative_import_line(entry) if entry.is_file() else None
+        if line is not None:
+            hits.append(
+                Hit(
+                    "PYINSTALLER-ENTRY-RELATIVE-IMPORT",
+                    entry.relative_to(root).as_posix(),
+                    line,
+                    f"PyInstaller 진입 스크립트({spec.name})가 상대 import 를 씀 — 진입점은 "
+                    "__main__ 으로 실행돼 'attempted relative import with no known parent package' "
+                    "로 죽는다. 절대 import 를 쓰는 얇은 진입 스크립트를 따로 둔다",
+                )
+            )
+    local = _local_packages(spec.parent) | _local_packages(root)
+    hidden = kw.get("hiddenimports")
+    own = [h for h in _str_list(hidden) if h.split(".")[0] in local]
+    if len(own) >= MIN_HAND_HIDDENIMPORTS:
+        hits.append(
+            Hit(
+                "PYINSTALLER-ENTRY-RELATIVE-IMPORT",
+                spec.relative_to(root).as_posix(),
+                hidden.lineno if hidden is not None else call.lineno,
+                f"자체 패키지 모듈 {len(own)}개를 hiddenimports 에 손으로 나열 — "
+                "collect_submodules('패키지') 로 바꿔 모듈 이동·추가 때 누락을 막는다",
+                severity="review",
+            )
+        )
+    return hits
+
+
+def check_pyinstaller_entry_relative_import(root: Path) -> list:
+    """ERR-12: .spec 의 Analysis([...]) 진입 스크립트가 상대 import(`from .x import`)를 씀.
+
+    덤으로 자체 패키지 모듈을 hiddenimports 에 손으로 나열한 경우를 참고(review)로 알린다.
+    """
+    hits = []
+    for spec in _spec_files(root):
+        try:
+            tree = ast.parse(read_text(spec))
+        except (SyntaxError, ValueError, OSError):
+            continue
+        for call in _analysis_calls(tree):
+            hits.extend(_spec_hits(root, spec, call))
+    return hits
+
+
+def _is_test_path(rel: str) -> bool:
+    path = Path(rel)
+    return "tests" in path.parts or path.name.startswith(("test_", "conftest"))
+
+
+def _rooted_at_dunder_file(node: ast.AST) -> bool:
+    return any(isinstance(n, ast.Name) and n.id == "__file__" for n in ast.walk(node))
+
+
+def _parents_root_line(tree: ast.AST) -> int | None:
+    """`Path(__file__)....parents[N]` 또는 `....parent.parent` 로 루트를 계산하는 첫 줄."""
+    for n in ast.walk(tree):
+        if (
+            isinstance(n, ast.Subscript)
+            and isinstance(n.value, ast.Attribute)
+            and n.value.attr == "parents"
+            and _rooted_at_dunder_file(n.value)
+        ):
+            return n.lineno
+        if (
+            isinstance(n, ast.Attribute)
+            and n.attr == "parent"
+            and isinstance(n.value, ast.Attribute)
+            and n.value.attr == "parent"
+            and _rooted_at_dunder_file(n.value)
+        ):
+            return n.lineno
+    return None
+
+
+def check_scattered_parents_root(parsed: dict) -> list:
+    """STD-15: 저장소 루트를 `Path(__file__).parents[N]` 로 여러 파일이 제각각 계산함.
+
+    파일을 옮기면 N 이 조용히 틀어진다. 테스트 파일은 제외하고, 제품 코드 3개 파일 이상에
+    흩어져 있을 때만 보고한다(한 곳의 루트 도우미는 정상).
+    """
+    found = []
+    for rel, tree in parsed.items():
+        if _is_test_path(rel):
+            continue
+        line = _parents_root_line(tree)
+        if line is not None:
+            found.append((rel, line))
+    if len(found) < MIN_SCATTERED_ROOT_FILES:
+        return []
+    return [
+        Hit(
+            "SCATTERED-PARENTS-ROOT",
+            rel,
+            line,
+            f"루트 경로를 __file__ 기준 parents[N]/parent.parent 로 직접 계산(같은 패턴 {len(found)}개 파일) — "
+            "루트 도우미 함수 하나로 모은다(파일 이동 시 N 이 조용히 틀어짐)",
+        )
+        for rel, line in found
+    ]
+
+
+def _subpackage_reexports(stmt: ast.ImportFrom, pkg: str, parsed: dict) -> list:
+    """`from .sub import x` / `from . import sub` 중 sub 가 하위 패키지(폴더)인 이름들."""
+    prefix = f"{pkg}/" if pkg else ""
+    names = [stmt.module.split(".")[0]] if stmt.module else [a.name for a in stmt.names]
+    return [n for n in names if f"{prefix}{n}/__init__.py" in parsed]
+
+
+def check_init_subpackage_reexport(parsed: dict) -> list:
+    """STD-16: 패키지 `__init__.py` 가 편의상 하위 패키지(폴더)를 다시 내보냄.
+
+    하위 패키지를 옮기거나 그 하위 패키지가 부모를 import 하면 폴더 단위 순환 import 가 생긴다.
+    같은 폴더의 모듈(`from .models import X`)은 흔한 공개 API 정리라 보수적으로 제외한다.
+    """
+    hits = []
+    for rel, tree in parsed.items():
+        if Path(rel).name != "__init__.py" or _is_test_path(rel):
+            continue
+        pkg = Path(rel).parent.as_posix()
+        pkg = "" if pkg == "." else pkg
+        for stmt in getattr(tree, "body", []):
+            if not (isinstance(stmt, ast.ImportFrom) and stmt.level == 1):
+                continue
+            subs = _subpackage_reexports(stmt, pkg, parsed)
+            if subs:
+                hits.append(
+                    Hit(
+                        "INIT-SUBPACKAGE-REEXPORT",
+                        rel,
+                        stmt.lineno,
+                        f"__init__.py 가 하위 패키지({', '.join(subs)})를 다시 내보냄 — "
+                        "사용처가 하위 패키지를 직접 import 하게 하고 재수출은 뺀다(폴더 단위 순환 방지)",
+                    )
+                )
+    return hits
 
 
 # ---------------------------------------------------------------- 비밀값 (SEC-03/04)

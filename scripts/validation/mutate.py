@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _paths import load_paths
 
 sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")  # STD-14: 오류 출력도 한글이 깨지지 않게
 random.seed(11)
 HOSTS_FROM = [Path(p) for p in load_paths("hosts_from.txt")]
 OUT = Path(sys.argv[1])

@@ -31,6 +31,7 @@ select = [
     "PERF",     # 효율: 불필요한 리스트 재구성, 반복문 안 수동 컴프리헨션 (EFF-01)
     "C4",       # 불필요한 컴프리헨션·형변환 (EFF-01)
     "S",        # 보안: 비밀값 하드코딩, 예외 삼키기, shell=True (STD-04, STD-09, ERR-03)
+    "A005",     # 표준 라이브러리 모듈 이름 가림(calendar.py, selectors.py 등) (STD-13)
 ]
 ignore = [
     "PLR2004",  # 매직 넘버 — 자동화 스크립트에서 과도함
@@ -47,6 +48,12 @@ extend-immutable-calls = [
     "fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body",
     "fastapi.Header", "fastapi.Cookie", "fastapi.Form", "fastapi.File", "fastapi.Security",
 ]
+
+[lint.flake8-builtins]
+# STD-13(A005): 기본값은 프로젝트 루트/src 기준 최상위 이름만 보지만, 스크립트를 직접 실행하면
+# 그 스크립트의 폴더가 sys.path[0] 이 되어 하위 폴더의 calendar.py 도 표준 모듈을 가린다
+# (2026-10-07 다른 프로젝트 실측). 그래서 마지막 이름만 보는 strict 검사를 켠다.
+strict-checking = true
 
 [lint.mccabe]
 max-complexity = 10

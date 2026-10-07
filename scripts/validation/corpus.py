@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")  # STD-14: 오류 출력도 한글이 깨지지 않게
 from audit_kit.config import load_config
 from audit_kit.std.run import project_files, run_std
 

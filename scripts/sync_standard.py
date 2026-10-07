@@ -56,6 +56,7 @@ def write_version_stamp(source: Path) -> None:
 
 def main(argv: list) -> int:
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined,union-attr]
+    sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[attr-defined,union-attr]  # STD-14
     source = Path(argv[1]) if len(argv) > 1 else DEFAULT_SOURCE
     missing = [rel for rel in FILES.values() if not (source / rel).is_file()]
     if missing:

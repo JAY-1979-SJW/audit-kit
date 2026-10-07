@@ -168,8 +168,14 @@ def run_std_ruff(cfg: AuditConfig, rules: list, files: list, ruff_config: Path) 
     p = run_module("ruff", [*args, *targets], cfg.root)
     if p.missing:
         return ToolResult("std-ruff", "skipped", detail=p.stderr)
+    if p.returncode != 0 or not p.stdout.strip():
+        # --exit-zero 라 위반이 있어도 0 이고, JSON 출력은 0건이어도 "[]" 다. 종료코드가 0 이 아니거나
+        # (2=설정·내부 오류, -1=시간 초과) 출력이 비면 검사를 못 돈 것이므로 '0건 통과'가 아니라
+        # 오류로 보고한다(ERR-10, 2026-10-08).
+        detail = f"ruff 종료코드 {p.returncode}, 출력 없음 또는 비정상: " + p.stderr[-1500:]
+        return ToolResult("std-ruff", "error", detail=detail)
     try:
-        items = json.loads(p.stdout or "[]")
+        items = json.loads(p.stdout)
     except json.JSONDecodeError:
         return ToolResult("std-ruff", "error", detail=(p.stderr or p.stdout)[-1500:])
     scanned = set(files)
@@ -227,6 +233,9 @@ def run_std_custom(cfg: AuditConfig, rules: list, registry: list, files: list) -
     parsed, broken = parse_files(cfg, files)
     hits = [h for rel, tree in parsed.items() for h in checks.run_file_checks(tree, rel)]
     hits += checks.check_func_body_dup(parsed)
+    hits += checks.check_scattered_parents_root(parsed)
+    hits += checks.check_init_subpackage_reexport(parsed)
+    hits += checks.check_pyinstaller_entry_relative_import(cfg.root)
     hits += checks.check_copy_filenames(files)
     hits += checks.check_root_tests(files)
     hits += checks.check_claude_md(cfg.root, CLAUDE_MD_LIMIT)

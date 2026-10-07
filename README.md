@@ -40,6 +40,7 @@ audit-kit std --rules R.toml --ruff-config C.toml --registry D.toml   # 다른 �
 - `try/except ImportError`, `TYPE_CHECKING`, `sys.version_info`·`sys.platform` 분기 안의 import 는 선택 import 로 본다.
 - `tests/fixtures/` 는 검사하지 않는다.
 - **검증**: 실제 코드 956개 파일 표본 검토(정밀도)와 결함 525개 심기(재현율 100%)로 확인했고, 그 과정에서 오탐·미탐 8종을 고쳤다. 결과와 알려진 한계는 `docs/검증결과_std.md`, 재실행은 `scripts/validation/`.
+- **2026-10-08 실측 교훈 추가(원장 v3)**: 표준 모듈 이름 가림(STD-13, ruff A005 strict), stdout/stderr 한쪽만 UTF-8(STD-14), `parents[N]` 루트 계산 분산(STD-15, 참고), `__init__` 의 하위 패키지 재수출(STD-16, 참고), 도구를 못 돌리고 '0건 통과'하는 게이트(ERR-10), PyInstaller 진입 스크립트 상대 import·hiddenimports 손 나열(ERR-12), O_EXCL 잠금의 PermissionError 누락(ERR-13)은 직접 구현 검사. 이름 변경 인식 diff 게이트(ERR-11)·원자적 상태 파일 쓰기(ERR-14)·고정 포트 테스트 병렬 금지(ERR-15)·데스크톱 앱 시작/자식 프로세스 정리(FE-10/11)·사용자 데이터 폴더(OPS-18)는 manual(리뷰 가이드). `audit-kit std` 의 ruff 단계도 종료코드≠0·빈 출력이면 '0건'이 아니라 오류로 보고한다(ERR-10 자기 적용).
 - **번들 갱신**: 원본은 `32. Claude 개발표준/standard`. 원본을 고친 뒤 `python scripts/sync_standard.py` (tests/test_std.py 의 번들 검사가 두 곳이 같은지 검사).
 - 한계: 정적 검사라 크기·데이터에 따른 성능은 판단하지 못한다(EFF-04·05 는 참고 등급). Windows 전용 API 는 Mac/Linux 에서도 정적으로 검사된다.
 
