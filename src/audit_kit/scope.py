@@ -14,6 +14,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from audit_kit._proc import no_window_kwargs
+
 # 폴더 이름 → 보조 역할 (자동 분류)
 SUPPORT_NAMES = {
     "tests": ["tests", "test", "testing"],
@@ -77,7 +79,7 @@ class Scope:
 
 def _git(root: Path, *args) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=60)
+                          errors="replace", timeout=60, **no_window_kwargs())
 
 
 def _filesystem_files(root: Path) -> list:

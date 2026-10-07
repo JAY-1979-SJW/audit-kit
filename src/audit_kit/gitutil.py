@@ -17,6 +17,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from audit_kit._proc import no_window_kwargs
+
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -35,6 +37,7 @@ def run_git(
         errors="replace",
         timeout=timeout,
         check=check,
+        **no_window_kwargs(),
     )
 
 

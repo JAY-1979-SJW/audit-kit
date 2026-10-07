@@ -28,6 +28,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from audit_kit._proc import no_window_kwargs
+
 import yaml
 
 from audit_kit import ghcheck
@@ -118,7 +120,7 @@ def python_launcher(version: str) -> list[str] | None:
     """`py -3.14` 같은 실행 명령. 그 버전이 이 PC 에 없으면 None."""
     for cmd in (["py", f"-{version}"], [f"python{version}"]):
         try:
-            p = subprocess.run([*cmd, "--version"], capture_output=True, timeout=30, check=False)
+            p = subprocess.run([*cmd, "--version"], capture_output=True, timeout=30, check=False, **no_window_kwargs())
         except (OSError, subprocess.TimeoutExpired):
             continue
         if p.returncode == 0:
@@ -162,7 +164,8 @@ def run_script(bash: str, script: str, cwd: Path, env: dict, timeout: int) -> tu
         f.write_bytes(script.encode("utf-8"))
         try:
             p = subprocess.run(
-                [bash, str(f)], cwd=cwd, env=env, capture_output=True, timeout=timeout, check=False
+                [bash, str(f)], cwd=cwd, env=env, capture_output=True, timeout=timeout, check=False,
+                **no_window_kwargs(),
             )
         except subprocess.TimeoutExpired:
             return -1, f"시간 초과({timeout}초)"

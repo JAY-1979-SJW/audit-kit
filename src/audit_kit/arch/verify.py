@@ -17,6 +17,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
     import tomli as tomllib
 
+from audit_kit._proc import no_window_kwargs
 from audit_kit.arch.scan import scan
 from audit_kit.arch.spec import ArchSpec
 from audit_kit.config import AuditConfig
@@ -69,6 +70,7 @@ def _target_python_launcher(root: Path) -> list[str]:
         capture_output=True,
         timeout=10,
         check=False,
+        **no_window_kwargs(),
     )
     if probe.returncode == 0:
         return ["py", f"-{version}"]
@@ -89,6 +91,7 @@ def _pip_install_editable(root: Path, timeout: int = 600) -> Proc:
             timeout=timeout,
             env=env,
             check=False,
+            **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired as err:
         stdout = err.stdout.decode("utf-8", errors="replace") if err.stdout else ""

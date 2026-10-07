@@ -8,6 +8,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from audit_kit._proc import no_window_kwargs
+
 
 @dataclass
 class Proc:
@@ -36,6 +38,7 @@ def run_python(args: list, cwd: Path, timeout: int = 600) -> Proc:
             capture_output=True,
             timeout=timeout,
             env=env,
+            **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired as e:
         return Proc(-1, _decode(e.stdout), f"시간 초과({timeout}s)")

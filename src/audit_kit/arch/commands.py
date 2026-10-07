@@ -6,6 +6,8 @@ import json
 import subprocess
 import sys
 import tempfile
+
+from audit_kit._proc import no_window_kwargs
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass
@@ -113,6 +115,7 @@ def _git_dirty(root: Path, files: list) -> list:
             text=True,
             encoding="utf-8",
             timeout=30,
+            **no_window_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return []

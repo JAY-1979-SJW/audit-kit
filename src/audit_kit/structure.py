@@ -14,6 +14,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from audit_kit._proc import no_window_kwargs
 from audit_kit.config import AuditConfig, read_pyproject
 from audit_kit.models import CRITICAL, IGNORE, IMPROVE, REVIEW, Finding, ToolResult
 from audit_kit.scope import build_project_graph, get_scope
@@ -624,6 +625,7 @@ def find_interpreter(ver: tuple) -> list | None:
                 text=True,
                 encoding="utf-8",
                 timeout=20,
+                **no_window_kwargs(),
             )
         except (OSError, subprocess.TimeoutExpired):
             continue
@@ -666,6 +668,7 @@ def check_python_version(cfg, scope) -> list:
                 text=True,
                 encoding="utf-8",
                 timeout=600,
+                **no_window_kwargs(),
             )
             bad = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else []
         finally:

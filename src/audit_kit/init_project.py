@@ -8,6 +8,7 @@ import sys
 from importlib import resources
 from pathlib import Path
 
+from audit_kit._proc import no_window_kwargs
 from audit_kit.config import detect_packages, read_pyproject
 from audit_kit.runner import module_available
 from audit_kit.textio import (
@@ -237,6 +238,7 @@ def _install_precommit_hooks(root: Path) -> str:
             encoding="utf-8",
             timeout=60,
             check=False,
+            **no_window_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         return f"  ! pre-commit install 실패: {e}"

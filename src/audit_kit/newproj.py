@@ -22,6 +22,7 @@ from pathlib import Path
 import cruft
 from cookiecutter.exceptions import OutputDirExistsException
 
+from audit_kit._proc import no_window_kwargs
 from audit_kit.arch.templates import TYPES
 
 # audit-kit 저장소 루트: src/audit_kit/newproj.py 에서 두 단계 위.
@@ -41,13 +42,14 @@ def _git_init_commit(project_dir: Path) -> None:
         )
         return
     try:
-        subprocess.run([git, "init", "-q"], cwd=project_dir, check=True, capture_output=True)
-        subprocess.run([git, "add", "-A"], cwd=project_dir, check=True, capture_output=True)
+        subprocess.run([git, "init", "-q"], cwd=project_dir, check=True, capture_output=True, **no_window_kwargs())
+        subprocess.run([git, "add", "-A"], cwd=project_dir, check=True, capture_output=True, **no_window_kwargs())
         subprocess.run(
             [git, "commit", "-q", "-m", "chore: audit-kit new 로 골격 생성"],
             cwd=project_dir,
             check=True,
             capture_output=True,
+            **no_window_kwargs(),
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         print(

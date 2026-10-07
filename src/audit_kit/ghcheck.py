@@ -23,6 +23,8 @@ import sys
 import time
 from pathlib import Path
 
+from audit_kit._proc import no_window_kwargs
+
 DEFAULT_TIMEOUT = 300
 DEFAULT_INTERVAL = 10
 TERMINAL_OK = {"success", "neutral", "skipped"}
@@ -42,6 +44,7 @@ def _run_gh(args: list, cwd: Path, timeout: int = 30) -> str:
             encoding="utf-8",
             timeout=timeout,
             check=False,
+            **no_window_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         raise GhCheckError(str(e)) from e
@@ -58,6 +61,7 @@ def head_sha(root: Path) -> str:
         text=True,
         encoding="utf-8",
         check=False,
+        **no_window_kwargs(),
     )
     if p.returncode != 0 or not p.stdout.strip():
         raise GhCheckError("git 저장소가 아니거나 커밋이 없습니다")
