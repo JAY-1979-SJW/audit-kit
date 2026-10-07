@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 from pathlib import Path
 
@@ -307,9 +308,16 @@ def test_bundle_matches_source_of_truth():
     }
     if not source.is_dir():
         return  # 원본 폴더가 없는 PC(번들만 있는 경우)에서는 비교하지 않는다
-    for name, rel in pairs.items():
-        same = bundled(name).read_bytes() == (source / rel).read_bytes()
-        assert same, f"{name} 이 원본과 다름: python scripts/sync_standard.py"
+    # 번들은 원본을 그대로 복사한 것이 아니라 '비공개 이름을 지운(스크러브) 결과'다 — 치환표는 로컬 전용 파일이라 없으면 비교할 수 없다
+    spec = importlib.util.spec_from_file_location("sync_standard_for_bundle_test", Path(__file__).resolve().parents[1] / "scripts" / "sync_standard.py")
+    assert spec and spec.loader
+    sync_standard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sync_standard)
+    if not sync_standard.SCRUB_MAP.is_file():
+        return
+    expected = sync_standard.scrubbed_source(source, sync_standard.load_scrub_rules(sync_standard.SCRUB_MAP))
+    for name in pairs:
+        assert bundled(name).read_bytes() == expected[name], f"{name} 이 원본(스크러브 후)과 다름: python scripts/sync_standard.py"
 
 
 def test_registry_loads():
