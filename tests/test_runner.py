@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -26,7 +28,7 @@ def test_run_python_normal_call_still_works(tmp_path: Path):
 @pytest.mark.skipif(sys.platform != "win32", reason="tasklist 로 생존 확인 — Windows 전용")
 def test_run_python_timeout_kills_grandchild_process(tmp_path: Path):
     """시간 초과로 끝낸 호출의 자손(그랜드차일드)도 함께 종료되어야 한다 — 부모만 죽이면
-    자손이 남아 파이프를 쥔 채 멈춰 있던 문제(2026-10-08, PR #160 CI verify 90분 초과)."""
+    자손이 남아 파이프를 쥔 채 멈춰 있던 문제(대형 저장소 CI 에서 관찰, 2026-10-08)."""
     marker = tmp_path / "grandchild_pid.txt"
     script = (
         "import subprocess, sys, time; "
@@ -45,3 +47,48 @@ def test_run_python_timeout_kills_grandchild_process(tmp_path: Path):
         ["tasklist", "/FI", f"PID eq {pid}"], capture_output=True, text=True, check=False
     ).stdout
     assert str(pid) not in out, out
+
+
+def test_run_python_does_not_hang_when_grandchild_still_holds_pipe(tmp_path: Path, monkeypatch):
+    """`kill_tree` 뒤에도 자손(그랜드차일드)이 파이프 쓰기 쪽을 쥐고 있어 두 번째
+    `communicate(timeout=5)`마저 시간 초과하면, 무한정 기다리지 말고(원래 증상 재현을
+    피해) 파이프를 닫고 빈 출력으로 즉시 돌아와야 한다."""
+    real_popen = subprocess.Popen
+
+    class _HangingProc:
+        def __init__(self, *a, **kw):
+            self._inner = real_popen(*a, **kw)
+            self.pid = self._inner.pid
+            self.stdout = self._inner.stdout
+            self.stderr = self._inner.stderr
+            self._calls = 0
+
+        def communicate(self, timeout=None):
+            self._calls += 1
+            if self._calls >= 2:  # kill_tree 뒤 재시도도 자손이 파이프를 쥐고 있어 또 시간 초과
+                raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0)
+            return self._inner.communicate(timeout=timeout)
+
+    created: list[_HangingProc] = []
+    original_init = _HangingProc.__init__
+
+    def _tracked_init(self, *a, **kw):
+        original_init(self, *a, **kw)
+        created.append(self)
+
+    _HangingProc.__init__ = _tracked_init
+    monkeypatch.setattr("audit_kit.runner.subprocess.Popen", _HangingProc)
+    try:
+        with mock.patch("audit_kit.runner.kill_tree") as killed:
+            start = time.monotonic()
+            p = run_python(["-c", "import time; time.sleep(60)"], tmp_path, timeout=1)
+            elapsed = time.monotonic() - start
+        assert killed.called
+        assert elapsed < 15, f"무한 대기 없이 빠르게 돌아와야 한다 (걸린 시간 {elapsed:.1f}s)"
+        assert p.returncode == -1
+        assert p.stdout == "" and "시간 초과" in p.stderr
+    finally:
+        _HangingProc.__init__ = original_init
+        for proc in created:  # kill_tree 를 mock 했으니 실제 하위 프로세스는 직접 정리
+            proc._inner.kill()
+            proc._inner.wait(timeout=10)

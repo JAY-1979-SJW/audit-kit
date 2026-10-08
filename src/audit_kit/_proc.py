@@ -10,8 +10,8 @@ git.exe가 매번 새(보이는) conhost를 띄운다(실측: 2026-10-07, 다른
 
 `run_python`(runner.py)이 시간 초과로 멈춘 호출을 끝낼 때, 부모(mypy/ruff 같은
 파이썬 하위 명령)만 죽이면 그 자손(ruff/mypy 가 내부적으로 띄운 프로세스)이
-고아로 남아 파이프를 쥐고 있을 수 있다(2026-10-08, PR #160 CI verify 90분
-초과 조사에서 관찰). `no_window_kwargs(new_group=True)`로 자식을 새 프로세스
+고아로 남아 파이프를 쥐고 있을 수 있다(대형 저장소 CI 에서 관찰, 2026-10-08).
+`no_window_kwargs(new_group=True)`로 자식을 새 프로세스
 그룹(Windows)/세션(POSIX)에서 띄우고, `kill_tree()`로 통째로 종료한다.
 """
 

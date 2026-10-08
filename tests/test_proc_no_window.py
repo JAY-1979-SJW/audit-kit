@@ -53,7 +53,7 @@ def test_kill_tree_on_already_dead_pid_does_not_raise():
 @pytest.mark.skipif(sys.platform != "win32", reason="taskkill /T 는 Windows 전용 경로")
 def test_kill_tree_terminates_grandchild_process():
     """부모뿐 아니라 자손(그랜드차일드)까지 종료되어야 한다 — 부모만 죽이면 자손이 고아로
-    남아 파이프를 쥐고 있을 수 있던 문제(2026-10-08, PR #160 CI verify 90분 초과 조사)."""
+    남아 파이프를 쥐고 있을 수 있던 문제(대형 저장소 CI 에서 관찰, 2026-10-08)."""
     marker_script = (
         "import subprocess, sys, time; "
         "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "

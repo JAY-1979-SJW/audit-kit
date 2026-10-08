@@ -364,8 +364,8 @@ def test_hook_reports_file_scoped_std_custom_checks_immediately(sample):
 
 def test_hook_file_paths_batch_checks_all_and_matches_single_file_calls(sample):
     """`tool_input.file_paths`(목록)로 여러 파일을 한 번에 보내면, 파일마다 따로
-    `hook`을 부른 것과 같은 결과(둘 다 지적)를 한 프로세스 안에서 낸다(2026-10-08,
-    PR #160 CI verify 90분 초과 — build_project_graph 를 파일마다 새 프로세스에서
+    `hook`을 부른 것과 같은 결과(둘 다 지적)를 한 프로세스 안에서 낸다(대형 저장소
+    CI 에서 관찰된, 2026-10-08: build_project_graph 를 파일마다 새 프로세스에서
     다시 계산하던 문제의 공식 해결책)."""
     init_project(sample)
     pp = sample / "pyproject.toml"

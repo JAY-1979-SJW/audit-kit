@@ -50,8 +50,8 @@ def _files_from_input(data: dict) -> list[Path]:
 
     Claude Code PostToolUse 이벤트는 항상 파일 하나(`file_path`)지만, 커밋 단계 게이트처럼
     여러 파일을 검사해야 하는 호출 쪽은 `file_paths`로 한 프로세스 안에서 묶어 보낼 수 있다 —
-    파일마다 새 프로세스를 띄우면 `build_project_graph`를 매번(파일당 약 8.7초, 2026-10-08
-    PR #160 CI 90분 초과 조사) 다시 계산하게 된다."""
+    파일마다 새 프로세스를 띄우면 `build_project_graph`를 매번(파일당 약 8.7초, 대형 저장소
+    CI 에서 관찰, 2026-10-08) 다시 계산하게 된다."""
     ti = data.get("tool_input") or {}
     multi = ti.get("file_paths")
     if isinstance(multi, list) and multi:
