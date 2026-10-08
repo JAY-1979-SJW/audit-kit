@@ -362,6 +362,60 @@ def test_hook_reports_file_scoped_std_custom_checks_immediately(sample):
     assert "[표준 EFF-02]" in p.stderr and "in` 검사" in p.stderr
 
 
+def test_hook_file_paths_batch_checks_all_and_matches_single_file_calls(sample):
+    """`tool_input.file_paths`(목록)로 여러 파일을 한 번에 보내면, 파일마다 따로
+    `hook`을 부른 것과 같은 결과(둘 다 지적)를 한 프로세스 안에서 낸다(2026-10-08,
+    PR #160 CI verify 90분 초과 — build_project_graph 를 파일마다 새 프로세스에서
+    다시 계산하던 문제의 공식 해결책)."""
+    init_project(sample)
+    pp = sample / "pyproject.toml"
+    pp.write_text(
+        pp.read_text(encoding="utf-8").replace(
+            'hook_mode = "block"', 'hook_mode = "block"\nhook_tools = "all"'
+        ),
+        encoding="utf-8",
+    )
+    bad = sample / "app/services/quantity.py"
+    clean = sample / "app/core/router.py"
+
+    single_bad = _run(["hook"], sample, json.dumps({"tool_input": {"file_path": str(bad)}}))
+    single_clean = _run(["hook"], sample, json.dumps({"tool_input": {"file_path": str(clean)}}))
+
+    batch = _run(
+        ["hook"], sample, json.dumps({"tool_input": {"file_paths": [str(bad), str(clean)]}})
+    )
+    assert batch.returncode == 2, batch.stdout + batch.stderr
+    assert "F841" in batch.stderr and "assignment" in batch.stderr
+    assert single_bad.returncode == 2 and single_clean.returncode == 0
+    assert "app/services/quantity.py" in batch.stderr.replace("\\", "/")
+    # clean 파일은 지적이 없으니 배치 출력에 등장하지 않는다(파일별 구획)
+    assert "app/core/router.py" not in batch.stderr.replace("\\", "/")
+
+    only_clean = _run(["hook"], sample, json.dumps({"tool_input": {"file_paths": [str(clean)]}}))
+    assert only_clean.returncode == 0
+
+
+def test_hook_check_file_reuses_cached_graph_within_process(sample, monkeypatch):
+    """같은 프로세스 안에서 여러 파일을 검사할 때 `build_project_graph`가 1회만 불려야 한다
+    (파일당 약 8.7초짜리 전체 임포트 그래프 재계산이 원인이었던 느림, 2026-10-08 보고)."""
+    init_project(sample)
+    from audit_kit import hook
+    from audit_kit import scope as scope_mod
+
+    monkeypatch.setattr(hook, "_GRAPH_CACHE", {})
+    calls = []
+    real = scope_mod.build_project_graph
+
+    def counting(cfg, *a, **kw):
+        calls.append(1)
+        return real(cfg, *a, **kw)
+
+    monkeypatch.setattr(hook, "build_project_graph", counting)
+    hook.check_file(sample / "app/services/quantity.py")
+    hook.check_file(sample / "app/core/router.py")
+    assert len(calls) == 1, "같은 cfg.root 에 대해 build_project_graph 가 두 번 불렸다"
+
+
 # ---------------------------------------------------------------- pre-push (로컬 push 게이트)
 def test_pre_push_blocks_on_failing_test(sample):
     """GitHub 개인 계정+비공개 저장소는 required status check API 가 막혀 있어(2026-09-27 실측:

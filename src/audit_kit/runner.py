@@ -8,7 +8,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from audit_kit._proc import no_window_kwargs
+from audit_kit._proc import kill_tree, no_window_kwargs
 
 
 @dataclass
@@ -26,23 +26,35 @@ def module_available(module: str) -> bool:
 
 
 def run_python(args: list, cwd: Path, timeout: int = 600) -> Proc:
-    """현재 파이썬 인터프리터로 `python <args>` 실행. 대상 프로젝트 venv 안에서 돌아야 mypy/pytest가 의존성을 찾는다."""
+    """현재 파이썬 인터프리터로 `python <args>` 실행. 대상 프로젝트 venv 안에서 돌아야 mypy/pytest가 의존성을 찾는다.
+
+    시간 초과 때는 부모만 죽이지 않고 프로세스 트리(그룹) 전체를 종료한다 — 부모만 죽이면
+    자손(예: mypy/ruff 가 내부적으로 띄운 프로세스)이 고아로 남아 파이프를 쥔 채 멈춰 있을 수
+    있다(2026-10-08, PR #160 CI verify 90분 초과 조사에서 관찰).
+    """
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     env.setdefault("NO_COLOR", "1")
+    proc = subprocess.Popen(
+        [sys.executable, *args],
+        cwd=str(cwd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        **no_window_kwargs(new_group=True),
+    )
     try:
-        cp = subprocess.run(
-            [sys.executable, *args],
-            cwd=str(cwd),
-            capture_output=True,
-            timeout=timeout,
-            env=env,
-            **no_window_kwargs(),
-        )
-    except subprocess.TimeoutExpired as e:
-        return Proc(-1, _decode(e.stdout), f"시간 초과({timeout}s)")
-    return Proc(cp.returncode, _decode(cp.stdout), _decode(cp.stderr))
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_tree(proc.pid)
+        try:
+            out, err = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, err = proc.communicate()
+        return Proc(-1, _decode(out), f"시간 초과({timeout}s) — 프로세스 트리를 정리했습니다")
+    return Proc(proc.returncode, _decode(out), _decode(err))
 
 
 def run_module(module: str, args: list, cwd: Path, timeout: int = 600) -> Proc:
