@@ -11,10 +11,20 @@ import pytest
 
 from audit_kit._proc import kill_tree, no_window_kwargs
 
+# subprocess.CREATE_NO_WINDOW/CREATE_NEW_PROCESS_GROUP 는 CPython 소스에서
+# `if _mswindows:` 블록 안에만 정의돼 실제 Windows 가 아니면 속성 자체가 없다
+# (sys.platform 을 "win32"로 흉내 내도 이 상수는 안 생긴다) — CI(ubuntu)에서
+# Windows 분기를 시험하려면 리터럴 값을 직접 써야 한다(2026-10-08, 원래
+# 이 상수를 참조하던 시험이 ubuntu CI 에서 AttributeError 로 떨어지던 걸 발견).
+_CREATE_NO_WINDOW = 0x08000000
+_CREATE_NEW_PROCESS_GROUP = 0x00000200
+
 
 def test_returns_create_no_window_flag_on_windows():
-    with mock.patch("audit_kit._proc.sys.platform", "win32"):
-        assert no_window_kwargs() == {"creationflags": subprocess.CREATE_NO_WINDOW}
+    with mock.patch("audit_kit._proc.sys.platform", "win32"), mock.patch(
+        "audit_kit._proc.subprocess.CREATE_NO_WINDOW", _CREATE_NO_WINDOW, create=True
+    ):
+        assert no_window_kwargs() == {"creationflags": _CREATE_NO_WINDOW}
 
 
 def test_returns_empty_dict_on_non_windows():
@@ -28,10 +38,14 @@ def test_returns_empty_dict_on_darwin():
 
 
 def test_new_group_adds_new_process_group_flag_on_windows():
-    with mock.patch("audit_kit._proc.sys.platform", "win32"):
+    with mock.patch("audit_kit._proc.sys.platform", "win32"), mock.patch(
+        "audit_kit._proc.subprocess.CREATE_NO_WINDOW", _CREATE_NO_WINDOW, create=True
+    ), mock.patch(
+        "audit_kit._proc.subprocess.CREATE_NEW_PROCESS_GROUP", _CREATE_NEW_PROCESS_GROUP, create=True
+    ):
         flags = no_window_kwargs(new_group=True)["creationflags"]
-        assert flags & subprocess.CREATE_NO_WINDOW
-        assert flags & subprocess.CREATE_NEW_PROCESS_GROUP
+        assert flags & _CREATE_NO_WINDOW
+        assert flags & _CREATE_NEW_PROCESS_GROUP
 
 
 def test_new_group_starts_new_session_on_posix():
