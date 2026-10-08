@@ -78,6 +78,7 @@ def test_kill_tree_terminates_grandchild_process():
         [sys.executable, "-c", marker_script],
         stdout=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
         **no_window_kwargs(new_group=True),
     )
     grandchild_pid = int(parent.stdout.readline().strip())
@@ -89,6 +90,8 @@ def test_kill_tree_terminates_grandchild_process():
         ["tasklist", "/FI", f"PID eq {grandchild_pid}"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",  # tasklist 는 로케일(예: cp949)로 출력 — pid 숫자만 보면 되니 깨져도 무방
         check=False,
     ).stdout
     assert str(grandchild_pid) not in out, out

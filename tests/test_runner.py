@@ -44,7 +44,12 @@ def test_run_python_timeout_kills_grandchild_process(tmp_path: Path):
     import subprocess
 
     out = subprocess.run(
-        ["tasklist", "/FI", f"PID eq {pid}"], capture_output=True, text=True, check=False
+        ["tasklist", "/FI", f"PID eq {pid}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",  # tasklist 는 로케일(예: cp949)로 출력 — pid 숫자만 보면 되니 깨져도 무방
+        check=False,
     ).stdout
     assert str(pid) not in out, out
 
