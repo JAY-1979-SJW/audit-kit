@@ -31,16 +31,33 @@ from audit_kit.tools import run_mypy, run_ruff
 MAX_LINES = 40
 
 
-def _file_from_input(data: dict):
-    ti = data.get("tool_input") or {}
-    fp = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
-    if not fp:
-        return None
+def _resolve(fp: str, data: dict) -> Path:
     p = Path(fp)
     if not p.is_absolute():
         base = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or str(Path.cwd())
         p = Path(base) / p
     return p
+
+
+def _file_from_input(data: dict):
+    ti = data.get("tool_input") or {}
+    fp = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
+    return _resolve(fp, data) if fp else None
+
+
+def _files_from_input(data: dict) -> list[Path]:
+    """`tool_input.file_paths`(목록, 커밋 단계 일괄 호출용) 또는 단일 `file_path`.
+
+    Claude Code PostToolUse 이벤트는 항상 파일 하나(`file_path`)지만, 커밋 단계 게이트처럼
+    여러 파일을 검사해야 하는 호출 쪽은 `file_paths`로 한 프로세스 안에서 묶어 보낼 수 있다 —
+    파일마다 새 프로세스를 띄우면 `build_project_graph`를 매번(파일당 약 8.7초, 대형 저장소
+    CI 에서 관찰, 2026-10-08) 다시 계산하게 된다."""
+    ti = data.get("tool_input") or {}
+    multi = ti.get("file_paths")
+    if isinstance(multi, list) and multi:
+        return [_resolve(fp, data) for fp in multi if fp]
+    single = _file_from_input(data)
+    return [single] if single else []
 
 
 LINT_HOOK_MARKERS = ("py_post_edit", "ruff")
@@ -94,6 +111,22 @@ def _std_custom_msgs(root: Path, path: Path, rel: str) -> list[str]:
     return msgs
 
 
+_GRAPH_CACHE: dict[str, tuple] = {}
+
+
+def _cached_graph_and_spec(cfg):
+    """`build_project_graph(cfg)`·`load_spec(cfg.root)`를 프로세스당 저장소(cfg.root)마다 1회만.
+
+    같은 프로세스 안에서 여러 파일을 검사할 때(배치 입력, 또는 테스트에서 `check_file`을 여러
+    번 부를 때) 매번 프로젝트 전체 .py 를 다시 읽는 비용(파일당 약 8.7초, 2026-10-08 보고)을
+    없앤다. 프로세스가 끝나면 캐시도 사라지므로 파일이 그 사이 바뀌어도 다음 저장(새 프로세스)
+    에서는 새로 계산된다."""
+    key = str(cfg.root.resolve())
+    if key not in _GRAPH_CACHE:
+        _GRAPH_CACHE[key] = (build_project_graph(cfg), load_spec(cfg.root))
+    return _GRAPH_CACHE[key]
+
+
 def check_file(path: Path) -> list:
     cfg = load_config(path.parent)
     rel = cfg.rel(path)
@@ -117,9 +150,8 @@ def check_file(path: Path) -> list:
     msgs.extend(_std_custom_msgs(cfg.root, path, rel))
 
     try:
-        graph = build_project_graph(cfg)
+        graph, spec = _cached_graph_and_spec(cfg)
         mod = next((m for m, fp in graph.modules.items() if cfg.rel(fp) == rel), None)
-        spec = load_spec(cfg.root)
         if mod and spec is not None:
             # 설계 파일이 있으면 설계 기준으로: 이 파일에서 나가는 위반 + 이 파일이 낀 순환
             for v in scan(cfg, spec, graph):
@@ -165,31 +197,46 @@ def main() -> int:
         # exit 1 = Claude Code 에서 '막지 않는 오류'로 표시됨 → 검사가 건너뛰어졌음을 사용자가 알 수 있다
         sys.stderr.write(f"audit-kit hook: {e} — 이번 저장은 검사하지 않았습니다\n")
         return 1
-    path = _file_from_input(data)
-    if not path or path.suffix != ".py" or not path.is_file():
-        return 0
-    if any(part in {".venv", "venv", "site-packages", "node_modules"} for part in path.parts):
+    def eligible(p: Path) -> bool:
+        return (
+            p.suffix == ".py"
+            and p.is_file()
+            and not any(part in {".venv", "venv", "site-packages", "node_modules"} for part in p.parts)
+        )
+
+    paths = [p for p in _files_from_input(data) if eligible(p)]
+    if not paths:
         return 0
 
-    cfg = load_config(path.parent)
-    msgs = check_file(path)
-    if not msgs:
-        return 0
-    shown = msgs[:MAX_LINES]
-    if len(msgs) > MAX_LINES:
-        shown.append(f"... 외 {len(msgs) - MAX_LINES}건")
-    body = f"audit-kit: {cfg.rel(path)} 검사에서 {len(msgs)}건 발견\n" + "\n".join(shown)
+    block_sections: list[str] = []
+    warn_sections: list[str] = []
+    for path in paths:
+        cfg = load_config(path.parent)
+        msgs = check_file(path)
+        if not msgs:
+            continue
+        shown = msgs[:MAX_LINES]
+        if len(msgs) > MAX_LINES:
+            shown.append(f"... 외 {len(msgs) - MAX_LINES}건")
+        body = f"audit-kit: {cfg.rel(path)} 검사에서 {len(msgs)}건 발견\n" + "\n".join(shown)
+        (warn_sections if cfg.hook_mode == "warn" else block_sections).append(body)
 
-    if cfg.hook_mode == "warn":
+    if warn_sections:
         print(
             json.dumps(
-                {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": body}},
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PostToolUse",
+                        "additionalContext": "\n\n".join(warn_sections),
+                    }
+                },
                 ensure_ascii=False,
             )
         )
-        return 0
-    sys.stderr.write(
-        body
-        + "\n수정 후 다시 저장하세요. (타입 오류가 의도된 것이면 `# type: ignore[코드]` 사유와 함께)\n"
-    )
-    return 2
+    if block_sections:
+        sys.stderr.write(
+            "\n\n".join(block_sections)
+            + "\n수정 후 다시 저장하세요. (타입 오류가 의도된 것이면 `# type: ignore[코드]` 사유와 함께)\n"
+        )
+        return 2
+    return 0
