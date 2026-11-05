@@ -2190,7 +2190,12 @@ def is_first_party_source(top: str) -> bool:
     paths = [str(p).replace("\\", "/").lower() for p in places if p and p != "built-in"]
     if not paths:
         return False
-    return not any("site-packages" in p or "dist-packages" in p for p in paths)
+    in_site = ["site-packages" in p or "dist-packages" in p for p in paths]
+    if spec.origin is None:
+        # 네임스페이스 패키지: 위치가 여러 개 합쳐진다(예: 레포 scripts/ + pywin32 의 site-packages/win32/scripts).
+        # 소스 폴더 위치가 하나라도 있으면 자사 폴더가 풀린 것이므로 자사로 본다.
+        return not all(in_site)
+    return not any(in_site)
 
 
 def normalize(name: str) -> str:
