@@ -117,3 +117,25 @@ def test_other_rules_on_a_header_looking_line_are_not_dropped(tmp_path):
         "message": "m",
     }
     assert run._ruff_finding(cfg, [], item) is not None
+
+
+def test_namespace_package_mixed_with_site_packages_dir_is_first_party(tmp_path, monkeypatch):
+    """레포 scripts/(__init__ 없음) 와 site-packages 의 같은 이름 폴더(pywin32 의 win32/scripts)가 합쳐진 경우."""
+    own = tmp_path / "repo"
+    (own / "nsmix_pkg").mkdir(parents=True)
+    sp = tmp_path / "Lib" / "site-packages" / "win32"
+    (sp / "nsmix_pkg").mkdir(parents=True)
+    monkeypatch.syspath_prepend(str(sp))
+    monkeypatch.syspath_prepend(str(own))
+    assert checks.is_first_party_source("nsmix_pkg") is True
+
+
+def test_namespace_package_only_in_site_packages_is_not_first_party(tmp_path, monkeypatch):
+    sp = tmp_path / "Lib" / "site-packages"
+    (sp / "nsonly_pkg").mkdir(parents=True)
+    monkeypatch.syspath_prepend(str(sp))
+    assert checks.is_first_party_source("nsonly_pkg") is False
+
+
+def test_unregistered_external_import_is_still_a_registry_gap():
+    assert any("pytest" in str(g) for g in _gaps(Path("."), "import pytest"))
